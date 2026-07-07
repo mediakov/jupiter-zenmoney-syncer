@@ -1,0 +1,27 @@
+{
+  "name": "jupiter-zenmoney-syncer",
+  "version": "0.1.0",
+  "description": "Sync your Jupiter Card into ZenMoney via the ZenMoney diff API, using jupiter-card-sdk.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "jupiter-zenmoney-sync": "./src/cli.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "sync": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "jupiter-card-sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

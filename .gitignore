@@ -1,0 +1,6 @@
+node_modules/
+.jup-session.json
+*.session.json
+transactions-*.json
+.DS_Store
+*.log
