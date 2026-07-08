@@ -1,20 +1,28 @@
-FROM node:24-alpine
-
+# ---- build stage: compile TypeScript → plain JS ----
+FROM node:24-alpine AS build
 WORKDIR /app
-
-# install deps first (better layer caching)
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
-# app source
-COPY tsconfig.json ./
+RUN npm ci
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
+RUN npm run build
 
-# session persists here — mount a volume
+# ---- runtime stage: plain node, production deps only (no tsx/esbuild/typescript) ----
+FROM node:24-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+# trim V8 young-generation heap — this is a low-allocation, mostly-idle service
+ENV NODE_OPTIONS=--max-semi-space-size=4
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=build /app/dist ./dist
+
+# session/creds/cache persist here — mount a volume
 VOLUME ["/data"]
 ENV SESSION_FILE=/data/.jup-session.json
 ENV PORT=8080
 EXPOSE 8080
 
-# run the TypeScript service directly via tsx
-CMD ["npx", "tsx", "src/service/main.ts"]
+# run the compiled service directly — one node process, no transpile at runtime
+CMD ["node", "dist/service/main.js"]

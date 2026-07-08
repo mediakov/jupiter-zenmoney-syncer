@@ -7,3 +7,4 @@ transactions-*.json
 *.log
 .jup-credentials.json
 .jup-sigcache.json
+dist/

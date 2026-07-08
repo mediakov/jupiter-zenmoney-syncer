@@ -35,11 +35,12 @@ Launch SwiftBar and pick a plugin folder (e.g. `~/SwiftBar`). Then symlink this
 plugin into it (symlink = it updates when you `git pull`):
 
 ```bash
-ln -s "$(pwd)/menubar/jupiter-zen.10s.sh" ~/SwiftBar/jupiter-zen.10s.sh
+ln -s "$(pwd)/menubar/jupiter-zen.30s.sh" ~/SwiftBar/jupiter-zen.30s.sh
 ```
 
-The `10s` in the filename is the refresh interval — SwiftBar re-runs it every 10
-seconds. It appears in your menu bar immediately.
+The `30s` in the filename is the refresh interval — SwiftBar re-runs it every 30
+seconds. It appears in your menu bar immediately. (Bump it to `10s` if you want a
+snappier icon, or `60s`/`5m` to spawn even fewer processes.)
 
 ## Config
 

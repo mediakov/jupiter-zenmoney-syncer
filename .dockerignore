@@ -1,9 +1,14 @@
 node_modules
+dist
 .git
 .github
 test
 *.md
+menubar
+.env
 .jup-session.json
+.jup-credentials.json
+.jup-sigcache.json
 *.session.json
 transactions-*.json
 .DS_Store

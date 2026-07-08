@@ -17,9 +17,10 @@ services:
       - jup-data:/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
-      interval: 30s
+      interval: 2m
       timeout: 5s
       retries: 3
+      start_period: 20s
 
 volumes:
   jup-data:
