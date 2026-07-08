@@ -141,6 +141,36 @@ overwrite your categories, comments, renames, or splits. The syncer only inserts
 records ZenMoney doesn't have yet; the card account is created once (its balance
 is set at first insert, not force-refreshed).
 
+## How the account id is decided
+
+ZenMoney identifies every account by a UUID, and the syncer must produce the
+**same** id on every run — otherwise each sync would create a new account and
+duplicate it. So the id is derived deterministically from stable Jupiter data:
+
+1. **Anchor** — Jupiter's `cardAccountId` (the money account behind your card).
+   It's the same on every sync and shared across all your physical/virtual cards,
+   so it's the natural "one account" key. Fallbacks if absent: the card's own id,
+   then the literal `"jupiter-card"`.
+2. **Hash to a UUID** — the anchor is run through a deterministic UUID v5
+   (`stableUuid("account:" + anchor)`), because ZenMoney requires UUID-format ids.
+   Same input → same UUID, forever.
+
+```
+Jupiter cardAccountId  "acct_abc123"
+      ↓ deterministic hash (UUID v5)
+ZenMoney account id    "35e61a15-…-a84347347674"   ← identical every sync
+```
+
+Every transaction is stamped with that same account UUID (via `accountIdFor()` in
+`src/convert.ts`), so they all land in the one card account and ZenMoney updates
+it in place rather than duplicating. Transaction ids are derived the same way
+(`stableUuid("tx:" + jupiterTxId)`).
+
+**Card-only:** all transactions go to this single account; the per-transaction
+`cardId` (which physical card) isn't used to pick a different account. If you had
+more than one distinct Jupiter account (`cardAccountId`), `accountIdFor()` would
+need to key each transaction by its own account.
+
 ## ZenMoney diff format notes
 
 The ZenMoney `/v8/diff` API rejects incomplete objects with
