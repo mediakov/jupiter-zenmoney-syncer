@@ -32,6 +32,16 @@ export function controlPanelHtml(): string {
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .neg { color: #dc2626; } .pos { color: #16a34a; }
   .scroll { max-height: 340px; overflow: auto; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.busy { cursor: progress; }
+  .spin { display: inline-block; width: .75em; height: .75em; border: 2px solid #fff6; border-top-color: #fff; border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -1px; margin-right: .4em; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  #status-sum { font-size: .85rem; margin: .25rem 0 .5rem; }
+  #sync-ind { display: none; }
+  #sync-ind.on { display: inline-block; }
+  .toast { position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%) translateY(2rem); background: #222; color: #fff; padding: .6rem 1rem; border-radius: 8px; opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; font-size: .85rem; max-width: 90vw; box-shadow: 0 4px 16px #0004; z-index: 10; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.ok { background: #16a34a; } .toast.bad { background: #dc2626; } .toast.info { background: #4f46e5; }
 </style>
 </head>
 <body>
@@ -45,10 +55,10 @@ export function controlPanelHtml(): string {
 
 <div class="card">
   <div class="row"><strong>Jupiter</strong> <span id="jup-pill" class="pill bad">checking…</span></div>
-  <div class="row"><button onclick="sendCode()">1. Send login code to email</button></div>
+  <div class="row"><button id="btn-sendcode" onclick="sendCode(this)">1. Send login code to email</button></div>
   <div class="row">
     <input id="jup-code" inputmode="numeric" placeholder="Paste the 6-digit code" />
-    <button onclick="verify()">2. Verify</button>
+    <button id="btn-verify" onclick="verify(this)">2. Verify</button>
   </div>
 </div>
 
@@ -56,12 +66,19 @@ export function controlPanelHtml(): string {
   <div class="row"><strong>ZenMoney</strong> <span id="zen-pill" class="pill bad">checking…</span></div>
   <div class="row">
     <input id="zen-token" type="password" placeholder="Paste your ZenMoney API token" />
-    <button onclick="saveZen()">Save token</button>
+    <button id="btn-savezen" onclick="saveZen(this)">Save token</button>
   </div>
 </div>
 
 <div class="card">
-  <div class="row"><strong>Status</strong> <button class="secondary" onclick="refresh()">Refresh</button> <button class="secondary" onclick="syncNow()">Sync now</button> <button class="secondary" onclick="reconcile()" title="One-off: force deposit→transfer conversions to override existing income / deletions">Reconcile transfers</button></div>
+  <div class="row">
+    <strong>Status</strong>
+    <span id="sync-ind" class="pill info"><span class="spin"></span>syncing…</span>
+    <button id="btn-refresh" class="secondary" onclick="refresh(this)">Refresh</button>
+    <button id="btn-sync" class="secondary" onclick="syncNow(this)">Sync now</button>
+    <button id="btn-reconcile" class="secondary" onclick="reconcile(this)">Reconcile transfers</button>
+  </div>
+  <div id="status-sum" class="muted">loading…</div>
   <pre id="status">loading…</pre>
 </div>
 
@@ -75,27 +92,145 @@ export function controlPanelHtml(): string {
   <div id="zen-data" class="muted">no sync yet</div>
 </div>
 
+<div id="toast" class="toast"></div>
+
 <script>
   const $ = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const headers = () => { const t = $("admin").value.trim(); const h = { "content-type": "application/json" }; if (t) h.authorization = "Bearer " + t; return h; };
+  let lastStatus = null;
+
+  function toast(msg, kind) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.className = "toast show " + (kind || "info");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { t.className = "toast"; }, 3400);
+  }
+
   async function post(path, body) {
     const r = await fetch(path, { method: "POST", headers: headers(), body: body ? JSON.stringify(body) : undefined });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) alert(path + " → " + r.status + " " + JSON.stringify(j));
-    return { ok: r.ok, j };
+    return { ok: r.ok, status: r.status, j };
   }
-  async function sendCode() { const { ok } = await post("/auth/send-code"); if (ok) alert("Code sent — check your email."); }
-  async function verify() { const code = $("jup-code").value.trim(); if (!code) return alert("Enter the code first."); const { ok } = await post("/auth/verify", { code }); if (ok) { $("jup-code").value = ""; refresh(); } }
-  async function saveZen() { const token = $("zen-token").value.trim(); if (!token) return alert("Paste a token first."); const { ok } = await post("/auth/zenmoney", { token }); if (ok) { $("zen-token").value = ""; refresh(); } }
-  async function syncNow() { await post("/sync"); setTimeout(refresh, 800); }
-  async function reconcile() { if (confirm("Force deposit→transfer conversions to override existing income/deleted records? (one-off)")) { await post("/reconcile"); setTimeout(refresh, 1500); } }
-  async function refresh() {
-    const s = await fetch("/status").then((r) => r.json());
+
+  // Run an async action with a per-button busy state (spinner + disabled),
+  // guarding against double-clicks. Always restores the button afterwards.
+  async function withBusy(btn, busyLabel, fn) {
+    if (!btn || btn.dataset.busy) return;
+    const orig = btn.innerHTML;
+    btn.dataset.busy = "1";
+    btn.disabled = true;
+    btn.classList.add("busy");
+    btn.innerHTML = '<span class="spin"></span>' + busyLabel;
+    try { return await fn(); }
+    finally {
+      delete btn.dataset.busy;
+      btn.classList.remove("busy");
+      btn.innerHTML = orig;
+      btn.disabled = false;
+      applyState();
+    }
+  }
+
+  async function sendCode(btn) {
+    await withBusy(btn, "Sending…", async () => {
+      const { ok, j } = await post("/auth/send-code");
+      toast(ok ? "Code sent — check your email." : "Send failed: " + (j.error || "error"), ok ? "ok" : "bad");
+    });
+  }
+  async function verify(btn) {
+    const code = $("jup-code").value.trim();
+    if (!code) return toast("Enter the 6-digit code first.", "bad");
+    await withBusy(btn, "Verifying…", async () => {
+      const { ok, j } = await post("/auth/verify", { code });
+      if (ok) { $("jup-code").value = ""; toast("Jupiter connected.", "ok"); await refresh(); }
+      else toast("Verify failed: " + (j.error || "error"), "bad");
+    });
+  }
+  async function saveZen(btn) {
+    const token = $("zen-token").value.trim();
+    if (!token) return toast("Paste a token first.", "bad");
+    await withBusy(btn, "Saving…", async () => {
+      const { ok, j } = await post("/auth/zenmoney", { token });
+      if (ok) { $("zen-token").value = ""; toast("ZenMoney connected.", "ok"); await refresh(); }
+      else toast("Save failed: " + (j.error || "error"), "bad");
+    });
+  }
+  async function syncNow(btn) {
+    await withBusy(btn, "Syncing…", async () => {
+      const { ok, j } = await post("/sync");
+      if (!ok) return toast("Sync failed: " + (j.error || "error"), "bad");
+      toast("Sync started…", "info");
+      await waitForSync();
+    });
+  }
+  async function reconcile(btn) {
+    if (!confirm("Re-stamp deposit→transfer conversions with the current time so they override a manual app edit? (one-off — a normal sync already converts them.)")) return;
+    await withBusy(btn, "Reconciling…", async () => {
+      const { ok, j } = await post("/reconcile");
+      if (!ok) return toast("Reconcile failed: " + (j.error || "error"), "bad");
+      toast("Reconcile started…", "info");
+      await waitForSync();
+    });
+  }
+
+  // Poll until the service leaves the "syncing" state (or times out), so the
+  // triggering button stays busy for the real duration of the sync.
+  async function waitForSync(maxMs) {
+    const start = Date.now();
+    await sleep(400); // let the server flip to "syncing"
+    while (Date.now() - start < (maxMs || 30000)) {
+      const s = await refresh();
+      if (s && s.status !== "syncing") {
+        toast(s.lastSyncOk ? "Sync complete." : "Sync finished with an error.", s.lastSyncOk ? "ok" : "bad");
+        return s;
+      }
+      await sleep(1200);
+    }
+    return refresh();
+  }
+
+  async function refresh(btn) {
+    if (btn) return withBusy(btn, "Refreshing…", () => refresh());
+    let s;
+    try { s = await fetch("/status").then((r) => r.json()); }
+    catch { return null; }
+    lastStatus = s;
     $("status").textContent = JSON.stringify(s, null, 2);
+    $("status-sum").textContent = summarize(s);
     setPill("jup-pill", s.authenticated, "connected", "needs login");
     setPill("zen-pill", s.zenConnected, "connected", "no token");
-    refreshDetail();
+    applyState();
+    await refreshDetail();
+    return s;
   }
+
+  function summarize(s) {
+    const parts = [s.status];
+    if (s.lastSyncAt) parts.push("last sync " + new Date(s.lastSyncAt).toLocaleTimeString() + (s.lastSyncOk ? " ✓" : " ✕"));
+    if (s.lastResult) parts.push(s.lastResult.transactions + " tx" + (s.lastResult.pushed ? " pushed" : ""));
+    if (s.nextSyncAt) parts.push("next " + new Date(s.nextSyncAt).toLocaleTimeString());
+    if (s.lastError) parts.push("· error: " + s.lastError);
+    return parts.join(" · ");
+  }
+
+  // Enable/disable action buttons from the current service state. Never touches a
+  // button that's mid-action (its own busy state owns it).
+  function applyState() {
+    const s = lastStatus || {};
+    const syncing = s.status === "syncing";
+    const ready = !!(s.authenticated && s.zenConnected);
+    $("sync-ind").className = "pill info" + (syncing ? " on" : "");
+    for (const id of ["btn-sync", "btn-reconcile"]) {
+      const b = $(id);
+      if (!b || b.dataset.busy) continue;
+      b.disabled = !ready || syncing;
+      b.title = !ready ? "Connect Jupiter and ZenMoney first" : (syncing ? "A sync is already in progress" : "");
+    }
+    const v = $("btn-verify"); if (v && !v.dataset.busy) v.disabled = !!s.authenticated;
+  }
+
   function setPill(id, ok, okText, badText) { const e = $(id); e.textContent = ok ? okText : badText; e.className = "pill " + (ok ? "ok" : "bad"); }
   const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   function rows(html) { return '<div class="scroll"><table>' + html + "</table></div>"; }
@@ -130,7 +265,12 @@ export function controlPanelHtml(): string {
             '</td><td class="num neg">' + (t.outcome || "") + "</td><td>" + esc(t.payee || "") + "</td></tr>").join(""));
     }
   }
-  refresh(); setInterval(refresh, 5000);
+  // Enter submits the adjacent action.
+  $("jup-code").addEventListener("keydown", (e) => { if (e.key === "Enter") verify($("btn-verify")); });
+  $("zen-token").addEventListener("keydown", (e) => { if (e.key === "Enter") saveZen($("btn-savezen")); });
+
+  refresh();
+  setInterval(() => { if (!document.querySelector("button[data-busy]")) refresh(); }, 5000);
 </script>
 </body>
 </html>`;
