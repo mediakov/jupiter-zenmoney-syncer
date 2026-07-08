@@ -68,6 +68,7 @@ export function controlPanelHtml(): string {
     <input id="zen-token" type="password" placeholder="Paste your ZenMoney API token" />
     <button id="btn-savezen" onclick="saveZen(this)">Save token</button>
   </div>
+  <div class="row muted">Need a token? Get one at <a href="https://zerro.app/token" target="_blank" rel="noopener noreferrer">zerro.app/token</a>.</div>
 </div>
 
 <div class="card">
