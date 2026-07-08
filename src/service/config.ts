@@ -40,13 +40,17 @@ export function parseDuration(v: string | undefined, fallbackMs: number): number
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+  // Use `||` (not `??`) throughout so an *empty-string* env var — e.g. Docker
+  // Compose's `${JUP_EMAIL:-}` when unset — is treated as absent, not as a real
+  // value that would override the persisted credentials file.
+
   // JUP_EMAIL is optional: it can be provided later via the web UI / API.
-  const jupiterEmail = env.JUP_EMAIL ?? null;
+  const jupiterEmail = env.JUP_EMAIL || null;
 
   const dryRun = env.DRY_RUN === "1" || env.DRY_RUN === "true";
   // ZEN_TOKEN is optional: it can be provided later via the web UI / API.
   // Until a token is available (env or UI), syncs read+convert but don't push.
-  const zenToken = env.ZEN_TOKEN ?? null;
+  const zenToken = env.ZEN_TOKEN || null;
 
   const now = new Date().getUTCFullYear();
   // default to current + previous year so late-posting transactions near a
@@ -58,14 +62,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   return {
     jupiterEmail,
     zenToken,
-    sessionFile: env.SESSION_FILE ?? "/data/.jup-session.json",
-    credFile: env.CRED_FILE ?? "/data/credentials.json",
+    sessionFile: env.SESSION_FILE || "/data/.jup-session.json",
+    credFile: env.CRED_FILE || "/data/credentials.json",
     intervalMs: parseDuration(env.SYNC_INTERVAL, 6 * 3_600_000),
     years: years.length ? years : [now - 1, now],
     dryRun,
-    port: Number(env.PORT ?? 8080),
-    serviceToken: env.SERVICE_TOKEN ?? null,
+    port: Number(env.PORT || 8080),
+    serviceToken: env.SERVICE_TOKEN || null,
     solanaRpc: env.SOLANA_RPC || "https://api.mainnet-beta.solana.com",
-    sigCacheFile: env.SIG_CACHE_FILE ?? "/data/sig-cache.json",
+    sigCacheFile: env.SIG_CACHE_FILE || "/data/sig-cache.json",
   };
 }
