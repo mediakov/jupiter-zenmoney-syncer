@@ -49,6 +49,29 @@ export class PushLedger {
     };
   }
 
+  /**
+   * Drop ledger entries whose id is no longer in the current window (e.g. a
+   * transaction that aged out of SYNC_YEARS), keeping the file bounded to the
+   * active set. Only rewrites the file if something was actually pruned, so a
+   * steady-state sync stays write-free. Returns true if anything was removed.
+   */
+  retain(accounts: DiffAccount[], transactions: DiffTransaction[], deletions: DiffDeletion[]): boolean {
+    const keepA = new Set(accounts.map((a) => a.id));
+    const keepT = new Set(transactions.map((t) => t.id));
+    const keepD = new Set(deletions.map((d) => d.id));
+    let changed = false;
+    for (const id of Object.keys(this.data.accounts)) if (!keepA.has(id)) { delete this.data.accounts[id]; changed = true; }
+    for (const id of Object.keys(this.data.transactions)) if (!keepT.has(id)) { delete this.data.transactions[id]; changed = true; }
+    const keptDeletions = this.data.deletions.filter((id) => keepD.has(id));
+    if (keptDeletions.length !== this.data.deletions.length) {
+      this.data.deletions = keptDeletions;
+      this.delSet = new Set(keptDeletions);
+      changed = true;
+    }
+    if (changed) this.flush();
+    return changed;
+  }
+
   /** Record a successful push and persist. */
   record(set: PushSet): void {
     for (const a of set.accounts) this.data.accounts[a.id] = a.changed;

@@ -172,6 +172,8 @@ export class SyncService {
           resp = await this.zen.push(toPush.accounts, toPush.transactions, serverTimestamp, toPush.deletions);
           this.ledger.record(toPush);
         }
+        // keep the ledger bounded to the current window (prune aged-out records)
+        this.ledger.retain(diff.accounts, diff.transactions, diff.deletions);
         pushed = true;
 
         // Reconstruct how each Jupiter transaction was classified, in human terms.

@@ -40,4 +40,21 @@ describe("PushLedger", () => {
     const after = reloaded.pending(accounts, txs2, dels);
     expect(after.accounts.length + after.transactions.length + after.deletions.length).toBe(0);
   });
+
+  it("prunes entries that leave the window, and re-sends only if they return", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "ledger-")), "l.json");
+    const l = new PushLedger(path);
+    const accounts = [acct("a", 100)];
+    l.record(l.pending(accounts, [tx("t1", 10), tx("t2", 20)], [del("d1")]));
+
+    // window now only has t2 (t1 + d1 aged out) → they get pruned
+    expect(l.retain(accounts, [tx("t2", 20)], [])).toBe(true);
+    // nothing pruned the second time → no rewrite
+    expect(l.retain(accounts, [tx("t2", 20)], [])).toBe(false);
+
+    // t2 still known (not re-sent); t1/d1 pruned so they'd be re-sent if seen again
+    const p = l.pending(accounts, [tx("t1", 10), tx("t2", 20)], [del("d1")]);
+    expect(p.transactions.map((t) => t.id)).toEqual(["t1"]);
+    expect(p.deletions.map((d) => d.id)).toEqual(["d1"]);
+  });
 });
