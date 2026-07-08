@@ -20,6 +20,8 @@
 
 BASE="${JUPZEN_URL:-http://localhost:8080}"
 TOKEN="${JUPZEN_TOKEN:-}"
+# fall back to a token file (SwiftBar's per-plugin env is version-dependent)
+[ -z "$TOKEN" ] && [ -f "$HOME/.jupzen-token" ] && TOKEN="$(cat "$HOME/.jupzen-token")"
 COMPOSE_DIR="${JUPZEN_COMPOSE_DIR:-}"
 CURL=/usr/bin/curl
 

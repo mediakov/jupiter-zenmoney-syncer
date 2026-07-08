@@ -2,8 +2,13 @@ services:
   syncer:
     build: .
     restart: unless-stopped
+    # bind to loopback only — reachable from this Mac, not the LAN
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       # All optional — Jupiter email + ZenMoney token can also be set from the UI.
       JUP_EMAIL: ${JUP_EMAIL:-}
