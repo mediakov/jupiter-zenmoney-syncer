@@ -1,11 +1,64 @@
 # jupiter-zenmoney-syncer (Path B)
 
-A standalone Node service that reads your **Jupiter Card** (via `jupiter-card-sdk`)
-and pushes accounts + transactions into **ZenMoney** through its sync API
-(`POST /v8/diff`). Runs anywhere — a laptop, a cron, a small server.
+Reads your **Jupiter Card** (via `jupiter-card-sdk`) and pushes accounts +
+transactions into **ZenMoney** through its sync API (`POST /v8/diff`). Use it as
+a **one-shot CLI**, an embeddable **library**, or a **long-running service**.
 
 ```
 Jupiter Card ──(jupiter-card-sdk)──▶ shared converter ──(movements→diff adapter)──▶ ZenMoney /v8/diff
+```
+
+## Long-running service
+
+An always-on daemon that syncs on a schedule and exposes a small HTTP surface.
+
+```bash
+# Docker (recommended)
+JUP_EMAIL=you@example.com ZEN_TOKEN=xxx docker compose up -d
+
+# or directly
+JUP_EMAIL=you@example.com ZEN_TOKEN=xxx npm run serve
+```
+
+**One-time auth bootstrap** (first run only — the session then auto-refreshes and
+it runs unattended within the ~7-day refresh window as long as it syncs at least
+once per window):
+
+```bash
+curl -XPOST localhost:8080/auth/send-code
+curl -XPOST localhost:8080/auth/verify -H 'content-type: application/json' -d '{"code":"123456"}'
+```
+
+**Endpoints**
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | liveness |
+| GET | `/status` | last sync result, timestamps, auth state |
+| POST | `/sync` | trigger an immediate sync |
+| POST | `/auth/send-code` | send the Jupiter login OTP |
+| POST | `/auth/verify` | `{ "code": "…" }` complete login |
+
+`POST` routes require `Authorization: Bearer $SERVICE_TOKEN` when `SERVICE_TOKEN`
+is set.
+
+**Environment**
+
+| Var | Default | Notes |
+|---|---|---|
+| `JUP_EMAIL` | — | required |
+| `ZEN_TOKEN` | — | required unless `DRY_RUN=1` |
+| `SYNC_INTERVAL` | `6h` | e.g. `30m`, `1d` |
+| `SYNC_YEARS` | current year | e.g. `2025,2026` |
+| `SESSION_FILE` | `/data/.jup-session.json` | mount a volume |
+| `DRY_RUN` | — | `1` = read+convert, no push |
+| `PORT` | `8080` | control server |
+| `SERVICE_TOKEN` | — | protects POST routes |
+
+### As a library
+```ts
+import { sync, ZenMoneyClient } from "jupiter-zenmoney-syncer";
+await sync({ jupiter, zen, year: 2026 });
 ```
 
 ## How it works

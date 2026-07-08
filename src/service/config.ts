@@ -1,0 +1,61 @@
+/** Service configuration, parsed from environment variables. */
+export interface ServiceConfig {
+  /** Jupiter account email (required). */
+  jupiterEmail: string;
+  /** ZenMoney API token. Optional in dry-run mode (no push). */
+  zenToken: string | null;
+  /** Path to persist the Jupiter session (mount a volume in Docker). */
+  sessionFile: string;
+  /** How often to sync, in ms. */
+  intervalMs: number;
+  /** Which years to sync each run (e.g. current + previous to catch late posts). */
+  years: number[];
+  /** Don't push to ZenMoney — read + convert only (preview). */
+  dryRun: boolean;
+  /** HTTP port for the control/status server. */
+  port: number;
+  /** Optional bearer token protecting mutating endpoints (POST /sync, /auth/*). */
+  serviceToken: string | null;
+}
+
+/** Parse a duration like "6h", "30m", "90s", or a plain number of ms. */
+export function parseDuration(v: string | undefined, fallbackMs: number): number {
+  if (!v) return fallbackMs;
+  const m = /^(\d+)\s*(ms|s|m|h|d)?$/.exec(v.trim());
+  if (!m) return fallbackMs;
+  const n = Number(m[1]);
+  switch (m[2]) {
+    case "d": return n * 86_400_000;
+    case "h": return n * 3_600_000;
+    case "m": return n * 60_000;
+    case "s": return n * 1_000;
+    default: return n; // ms or unitless
+  }
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+  const jupiterEmail = env.JUP_EMAIL;
+  if (!jupiterEmail) throw new Error("JUP_EMAIL is required");
+
+  const dryRun = env.DRY_RUN === "1" || env.DRY_RUN === "true";
+  const zenToken = env.ZEN_TOKEN ?? null;
+  if (!zenToken && !dryRun) {
+    throw new Error("ZEN_TOKEN is required (or set DRY_RUN=1 to run without pushing)");
+  }
+
+  const now = new Date().getUTCFullYear();
+  const years = env.SYNC_YEARS
+    ? env.SYNC_YEARS.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+    : [now];
+
+  return {
+    jupiterEmail,
+    zenToken,
+    sessionFile: env.SESSION_FILE ?? "/data/.jup-session.json",
+    intervalMs: parseDuration(env.SYNC_INTERVAL, 6 * 3_600_000),
+    years: years.length ? years : [now],
+    dryRun,
+    port: Number(env.PORT ?? 8080),
+    serviceToken: env.SERVICE_TOKEN ?? null,
+  };
+}

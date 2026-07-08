@@ -1,0 +1,23 @@
+services:
+  syncer:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      JUP_EMAIL: ${JUP_EMAIL:?set JUP_EMAIL}
+      ZEN_TOKEN: ${ZEN_TOKEN:-}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-6h}
+      SYNC_YEARS: ${SYNC_YEARS:-}
+      DRY_RUN: ${DRY_RUN:-}
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-}
+    volumes:
+      - jup-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  jup-data:

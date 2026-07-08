@@ -1,0 +1,9 @@
+node_modules
+.git
+.github
+test
+*.md
+.jup-session.json
+*.session.json
+transactions-*.json
+.DS_Store

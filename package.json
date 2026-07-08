@@ -5,7 +5,8 @@
   "type": "module",
   "private": true,
   "bin": {
-    "jupiter-zenmoney-sync": "./src/cli.ts"
+    "jupiter-zenmoney-sync": "./src/cli.ts",
+    "jupiter-zenmoney-service": "./src/service/main.ts"
   },
   "engines": {
     "node": ">=20"
@@ -13,14 +14,15 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "sync": "tsx src/cli.ts"
+    "sync": "tsx src/cli.ts",
+    "serve": "tsx src/service/main.ts"
   },
   "dependencies": {
-    "jupiter-card-sdk": "^0.1.0"
+    "jupiter-card-sdk": "^0.1.0",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }
