@@ -73,7 +73,8 @@ email=$(jget "$STATUS" jupiterEmail)
 lastOk=$(jget "$STATUS" lastSyncOk)
 lastAt=$(jget "$STATUS" lastSyncAt)
 nextAt=$(jget "$STATUS" nextSyncAt)
-txs=$(jget "$STATUS" transactions)   # from lastResult
+txs=$(jget "$STATUS" transactions)   # window size (lastResult)
+sent=$(jget "$STATUS" sent)          # actually sent to ZenMoney last run (delta)
 err=$(jget "$STATUS" lastError)
 [ "$email" = "null" ] && email=""
 [ "$err" = "null" ] && err=""
@@ -107,9 +108,14 @@ echo "Jupiter: ${email:-not set}  $jd | color=$jc"
 [ "$zen" = "true" ] && zd="● connected" zc=green || zd="○ no token" zc=red
 echo "ZenMoney: $zd | color=$zc"
 
-line="Last sync: $(fmt_time "$lastAt")"
-[ -n "$txs" ] && line="$line · $txs tx"
-echo "$line"
+echo "Last sync: $(fmt_time "$lastAt")"
+if [ -n "$lastAt" ] && [ "$lastAt" != "null" ]; then
+  if [ -z "$sent" ] || [ "$sent" = "0" ]; then
+    echo "Sent this run: up to date | color=green"
+  else
+    echo "Sent this run: $sent tx | color=green"
+  fi
+fi
 echo "Next sync: $(fmt_time "$nextAt")"
 [ -n "$err" ] && echo "Error: $err | color=red"
 

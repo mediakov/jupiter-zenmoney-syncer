@@ -11,7 +11,7 @@ export interface ServiceState {
   lastSyncAt: string | null;
   lastSyncOk: boolean | null;
   lastError: string | null;
-  lastResult: { accounts: number; transactions: number; pushed: boolean } | null;
+  lastResult: { accounts: number; transactions: number; sent: number; pushed: boolean } | null;
   nextSyncAt: string | null;
   syncCount: number;
 }

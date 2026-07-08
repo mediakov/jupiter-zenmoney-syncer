@@ -256,7 +256,8 @@ export class SyncService {
       }
 
       this.lastDetail = { at: new Date().toISOString(), jupiter: jupiterDetail, zenmoney: zenmoneyDetail };
-      this.state.lastResult = { accounts: scrape.accounts.length, transactions: scrape.transactions.length, pushed };
+      const sentCount = zenmoneyDetail.pushed ? zenmoneyDetail.pushedThisRun.transactions : 0;
+      this.state.lastResult = { accounts: scrape.accounts.length, transactions: scrape.transactions.length, sent: sentCount, pushed };
       this.state.lastSyncOk = true;
       this.state.lastError = null;
       this.state.syncCount += 1;

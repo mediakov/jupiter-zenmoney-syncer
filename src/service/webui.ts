@@ -222,7 +222,7 @@ export function controlPanelHtml(): string {
   function summarize(s) {
     const parts = [s.status];
     if (s.lastSyncAt) parts.push("last sync " + new Date(s.lastSyncAt).toLocaleTimeString() + (s.lastSyncOk ? " ✓" : " ✕"));
-    if (s.lastResult) parts.push(s.lastResult.transactions + " tx" + (s.lastResult.pushed ? " pushed" : ""));
+    if (s.lastResult) parts.push(s.lastResult.transactions + " in window" + (typeof s.lastResult.sent === "number" ? " · " + s.lastResult.sent + " sent" : ""));
     if (s.nextSyncAt) parts.push("next " + new Date(s.nextSyncAt).toLocaleTimeString());
     if (s.lastError) parts.push("· error: " + s.lastError);
     return parts.join(" · ");
