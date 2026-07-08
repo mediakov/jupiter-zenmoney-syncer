@@ -56,7 +56,7 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
 
   // 4. push (unless dry run)
   if (!opts.dryRun) {
-    await zen.push(diff.accounts, diff.transactions, serverTimestamp);
+    await zen.push(diff.accounts, diff.transactions, serverTimestamp, diff.deletions);
   }
 
   return { accounts: diff.accounts.length, transactions: diff.transactions.length, pushed: !opts.dryRun };

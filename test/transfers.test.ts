@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { matchAccount, resolveDepositSources } from "../src/transfers.js";
-import { transactionToDiff } from "../src/toDiff.js";
+import { transactionToDiff, scrapeToDiff } from "../src/toDiff.js";
+import { stableUuid } from "../src/ids.js";
+import type { ScrapeResult } from "../src/zenTypes.js";
 import type { SolanaResolver } from "../src/solana.js";
 import type { ZenExistingAccount } from "../src/zenClient.js";
 import type { Transaction } from "jupiter-card-sdk";
@@ -84,5 +86,23 @@ describe("transactionToDiff transfer emission", () => {
     expect(normal.changed).toBeLessThan(Math.floor(Date.now() / 1000) - 60); // stable (tx date)
     const forced = transactionToDiff(ztx, "USD", { instruments, userId: 1, transferSources: src, reconcile: true });
     expect(forced.changed).toBeGreaterThan(Math.floor(Date.now() / 1000) - 5); // ≈ now
+  });
+
+  it("a transfer uses a distinct `transfer:` id, not the burned `tx:` id", () => {
+    const src = new Map([["txA", { accountId: "wallet-uuid", instrument: 3 }]]);
+    const asTransfer = transactionToDiff(ztx, "USD", { instruments, userId: 1, transferSources: src });
+    const asIncome = transactionToDiff(ztx, "USD", { instruments, userId: 1 });
+    expect(asTransfer.id).toBe(stableUuid("transfer:txA"));
+    expect(asIncome.id).toBe(stableUuid("tx:txA"));
+    expect(asTransfer.id).not.toBe(asIncome.id);
+  });
+
+  it("scrapeToDiff retires the old income id for resolved deposits", () => {
+    const scrape: ScrapeResult = { accounts: [{ id: "acct_1", type: "ccard", title: "Card", instrument: "USD", balance: 0, syncIds: null }], transactions: [ztx] };
+    const src = new Map([["txA", { accountId: "wallet-uuid", instrument: 3 }]]);
+    const withSrc = scrapeToDiff(scrape, { instruments, userId: 1, transferSources: src });
+    expect(withSrc.deletions).toEqual([{ id: stableUuid("tx:txA"), object: "transaction", stamp: expect.any(Number), user: 1 }]);
+    // no source → no deletion (stays plain income under its own id)
+    expect(scrapeToDiff(scrape, { instruments, userId: 1 }).deletions).toEqual([]);
   });
 });

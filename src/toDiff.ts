@@ -42,6 +42,14 @@ export interface DiffAccount {
   payoffInterval: string | null;
 }
 
+/** A deletion tombstone (`deletion[]` entry) sent to /v8/diff. */
+export interface DiffDeletion {
+  id: string;
+  object: string; // e.g. "transaction"
+  stamp: number;
+  user: number;
+}
+
 export interface DiffTransaction {
   id: string;
   changed: number;
@@ -88,9 +96,12 @@ export interface DiffContext {
    */
   transferSources?: Map<string, SourceAccount>;
   /**
-   * One-off override: stamp transfer transactions with `changed = now` so they
-   * beat an existing income record or a ZenMoney deletion tombstone. Only
-   * affects deposits that became transfers; all other records stay stable.
+   * One-off override: stamp transfer transactions with `changed = now` so a
+   * later app edit doesn't stop the conversion. Deposits that resolve to a
+   * transfer already get a **fresh id** (`transfer:` namespace) so they insert
+   * cleanly; ZenMoney permanently tombstones a *deleted* transaction id, so we
+   * never try to resurrect the old `tx:` record — we insert a new one and emit a
+   * deletion for the old income id. This flag only bumps `changed`.
    */
   reconcile?: boolean;
 }
@@ -110,6 +121,12 @@ const ACCOUNT_CHANGED_SEC = 1_600_000_000; // fixed baseline (2020-09), always o
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** Stable key for a Jupiter transaction (its id, falling back to movement/date). */
+function txKeyOf(tx: ZenTransaction): string {
+  const m = tx.movements[0];
+  return tx.id ?? m.id ?? `${+tx.date}:${m.sum ?? 0}`;
 }
 
 function requireInstrument(code: string, instruments: InstrumentMap): number {
@@ -177,8 +194,13 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
     }
   }
 
+  // A resolved deposit is a *transfer*: give it its own id namespace so it
+  // inserts as a fresh record. ZenMoney permanently tombstones a deleted id, so
+  // reusing the old `tx:` id (if the user deleted the income record) would never
+  // resurrect — a distinct `transfer:` id sidesteps that entirely.
+  const txKey = txKeyOf(tx);
   return {
-    id: stableUuid(`tx:${tx.id ?? m.id ?? `${+tx.date}:${sum}`}`),
+    id: stableUuid(`${source ? "transfer" : "tx"}:${txKey}`),
     changed,
     created: changed,
     user: ctx.userId,
@@ -212,7 +234,7 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
 export function scrapeToDiff(
   result: ScrapeResult,
   ctx: DiffContext,
-): { accounts: DiffAccount[]; transactions: DiffTransaction[] } {
+): { accounts: DiffAccount[]; transactions: DiffTransaction[]; deletions: DiffDeletion[] } {
   const accounts = result.accounts.map((a) => accountToDiff(a, ctx));
   const instrumentByAccount = new Map(result.accounts.map((a) => [a.id, a.instrument]));
   const transactions = result.transactions.map((tx) => {
@@ -220,5 +242,18 @@ export function scrapeToDiff(
     const code = "id" in first ? (instrumentByAccount.get(first.id) ?? "USD") : "USD";
     return transactionToDiff(tx, code, ctx);
   });
-  return { accounts, transactions };
+
+  // A deposit that resolved to a transfer is now inserted under a `transfer:` id.
+  // Retire any prior plain-income record (the `tx:` id) so the two don't both
+  // show — for a deposit that was only ever a transfer this deletes a
+  // never-existed id (a harmless no-op).
+  const stamp = Math.floor(Date.now() / 1000);
+  const deletions: DiffDeletion[] = [];
+  for (const tx of result.transactions) {
+    const sum = tx.movements[0].sum ?? 0;
+    if (sum > 0 && ctx.transferSources?.has(tx.id ?? "")) {
+      deletions.push({ id: stableUuid(`tx:${txKeyOf(tx)}`), object: "transaction", stamp, user: ctx.userId });
+    }
+  }
+  return { accounts, transactions, deletions };
 }

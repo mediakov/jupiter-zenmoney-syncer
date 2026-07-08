@@ -1,4 +1,4 @@
-import type { DiffAccount, DiffTransaction, InstrumentMap } from "./toDiff.js";
+import type { DiffAccount, DiffDeletion, DiffTransaction, InstrumentMap } from "./toDiff.js";
 
 const ZEN_DIFF_URL = "https://api.zenmoney.ru/v8/diff/";
 
@@ -91,17 +91,20 @@ export class ZenMoneyClient {
     };
   }
 
-  /** Push accounts + transactions. Idempotent given stable ids. */
+  /** Push accounts + transactions (+ optional deletions). Idempotent given stable ids. */
   async push(
     accounts: DiffAccount[],
     transactions: DiffTransaction[],
     serverTimestamp: number,
+    deletions: DiffDeletion[] = [],
   ): Promise<DiffResponse> {
-    return this.diff({
+    const body: Record<string, unknown> = {
       currentClientTimestamp: this.now(),
       serverTimestamp,
       account: accounts,
       transaction: transactions,
-    });
+    };
+    if (deletions.length) body.deletion = deletions;
+    return this.diff(body);
   }
 }

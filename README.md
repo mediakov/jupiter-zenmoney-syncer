@@ -45,7 +45,7 @@ curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d 
 | GET | `/health` | liveness |
 | GET | `/status` | last sync result, timestamps, per-connection auth state |
 | POST | `/sync` | trigger an immediate sync |
-| POST | `/reconcile` | one-off sync that forces deposit→transfer conversions to override existing income/deleted records |
+| POST | `/reconcile` | one-off sync that stamps deposit→transfer conversions with `changed = now` (a normal `/sync` already converts them; use this only to override a manual app edit) |
 | POST | `/auth/send-code` | send the Jupiter login OTP |
 | POST | `/auth/verify` | `{ "code": "…" }` complete Jupiter login |
 | POST | `/auth/zenmoney` | `{ "token": "…" }` set the ZenMoney API token |
@@ -187,6 +187,15 @@ identified and matched to one of your ZenMoney accounts:
    equal to the full address, or (per spec) whose **last 4 characters** match.
 4. If matched → the deposit is emitted as a transfer (money **out** of that
    account, **in** to the card). **Otherwise it stays income** — no guessing.
+
+A resolved deposit is inserted under its own id namespace (`transfer:<jupiterId>`)
+rather than the plain `tx:<jupiterId>` income id, and the syncer emits a
+**deletion** for that old income id. This matters because ZenMoney *permanently
+tombstones a deleted transaction id* — once you delete a record in the app, no
+push (even with a newer `changed` + `deleted:false`) can resurrect it. Using a
+fresh id sidesteps the tombstone, so converting a deposit income→transfer works
+whether the old record was left in place (it's deleted and replaced) or you'd
+already deleted it by hand (the fresh transfer just inserts).
 
 ### To enable it, tag your source accounts
 Add the funding wallet's address (or just its **last 4 chars**) to the `syncID`

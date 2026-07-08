@@ -143,7 +143,7 @@ export class SyncService {
           log: (m) => this.log("info", m),
         });
         const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources, reconcile });
-        const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp);
+        const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp, diff.deletions);
         pushed = true;
         zenmoneyDetail = {
           pushed: true,
