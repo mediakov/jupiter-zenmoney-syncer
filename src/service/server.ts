@@ -57,7 +57,7 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
         }
 
         // ── mutating routes below ──
-        if (method === "POST" && (path === "/sync" || path.startsWith("/auth/"))) {
+        if (method === "POST" && (path === "/sync" || path === "/reconcile" || path.startsWith("/auth/"))) {
           if (!authed(req)) return json(res, 401, { error: "unauthorized" });
 
           if (path === "/sync") {
