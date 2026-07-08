@@ -133,8 +133,13 @@ await sync({ jupiter, zen, year: 2026 });
 Card-only, income/expense: one `ccard` USD account; card purchases → expense
 with merchant + MCC (+ original-currency `op*` on conversions); USDC
 deposits/withdrawals → income/expense with the on-chain signature in the comment.
-Re-syncs are idempotent — every record uses a deterministic UUID (v5), so running
-again updates rather than duplicates.
+**Non-destructive & idempotent.** Every record uses a deterministic UUID (v5), and
+`changed` timestamps are the record's own (data-derived), never `now`. Since
+ZenMoney resolves conflicts by last-write-wins on `changed`, any edit you make in
+the ZenMoney app has a newer timestamp and **always wins** — re-syncs never
+overwrite your categories, comments, renames, or splits. The syncer only inserts
+records ZenMoney doesn't have yet; the card account is created once (its balance
+is set at first insert, not force-refreshed).
 
 ## ZenMoney diff format notes
 

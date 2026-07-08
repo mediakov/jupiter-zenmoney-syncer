@@ -76,8 +76,20 @@ export interface DiffTransaction {
 export interface DiffContext {
   instruments: InstrumentMap;
   userId: number;
-  nowSec?: number;
 }
+
+/**
+ * `changed` timestamps are **data-derived and stable**, never `Date.now()`.
+ * ZenMoney's /v8/diff resolves conflicts by last-write-wins on `changed`, so a
+ * stable timestamp makes re-syncs non-destructive: any later edit you make in
+ * the ZenMoney app has a newer `changed` and therefore always wins. The syncer
+ * only inserts records ZenMoney doesn't have yet.
+ *
+ * The card account has no meaningful "changed" on Jupiter's side, so it uses a
+ * fixed baseline — it's created once and never overwritten (its balance is set
+ * at first insert and not force-refreshed).
+ */
+const ACCOUNT_CHANGED_SEC = 1_600_000_000; // fixed baseline (2020-09), always older than any app edit
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -90,10 +102,9 @@ function requireInstrument(code: string, instruments: InstrumentMap): number {
 }
 
 export function accountToDiff(a: ZenAccount, ctx: DiffContext): DiffAccount {
-  const now = ctx.nowSec ?? Math.floor(Date.now() / 1000);
   return {
     id: stableUuid(`account:${a.id}`),
-    changed: now,
+    changed: ACCOUNT_CHANGED_SEC,
     user: ctx.userId,
     type: a.type,
     title: a.title,
@@ -121,7 +132,8 @@ export function accountToDiff(a: ZenAccount, ctx: DiffContext): DiffAccount {
 }
 
 export function transactionToDiff(tx: ZenTransaction, accountInstrument: string, ctx: DiffContext): DiffTransaction {
-  const now = ctx.nowSec ?? Math.floor(Date.now() / 1000);
+  // stable: the transaction's own time, so a later app edit always wins
+  const changed = Math.floor(tx.date.getTime() / 1000);
   const m = tx.movements[0];
   const sum = m.sum ?? 0;
   const instrId = requireInstrument(accountInstrument, ctx.instruments);
@@ -145,8 +157,8 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
 
   return {
     id: stableUuid(`tx:${tx.id ?? m.id ?? `${+tx.date}:${sum}`}`),
-    changed: now,
-    created: now,
+    changed,
+    created: changed,
     user: ctx.userId,
     deleted: false,
     date: ymd(tx.date),

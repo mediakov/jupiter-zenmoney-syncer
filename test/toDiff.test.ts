@@ -71,6 +71,22 @@ describe("transactionToDiff", () => {
     expect(a.id).toBe(b.id);
     expect(a.id).toBe(stableUuid("tx:tx_1"));
   });
+
+  it("changed is the transaction's own time (stable, non-destructive)", () => {
+    const d = transactionToDiff(ztx({ sum: -10 }), "USD", ctx);
+    const expected = Math.floor(new Date("2026-07-01T12:00:00.000Z").getTime() / 1000);
+    expect(d.changed).toBe(expected);
+    expect(d.created).toBe(expected);
+    // and it must NOT be "now"
+    expect(d.changed).toBeLessThan(Math.floor(Date.now() / 1000) - 60);
+  });
+});
+
+describe("accountToDiff (non-destructive)", () => {
+  it("uses a fixed baseline changed, not now", () => {
+    const d = accountToDiff(account, ctx);
+    expect(d.changed).toBe(1_600_000_000);
+  });
 });
 
 describe("scrapeToDiff", () => {
