@@ -16,6 +16,8 @@ export interface SyncOptions {
   solana?: SolanaResolver;
   /** Optional signature-resolution cache. */
   sigCache?: SignatureCache;
+  /** One-off: force deposit→transfer conversions to override existing records. */
+  reconcile?: boolean;
 }
 
 export interface SyncSummary {
@@ -50,7 +52,7 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
   const transferSources = await resolveDepositSources(transactions, { solana, accounts, cache: opts.sigCache });
 
   // adapt movements → diff format
-  const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
+  const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources, reconcile: opts.reconcile });
 
   // 4. push (unless dry run)
   if (!opts.dryRun) {

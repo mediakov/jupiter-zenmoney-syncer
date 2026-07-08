@@ -64,6 +64,10 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
             void service.runSync();
             return json(res, 202, { accepted: true });
           }
+          if (path === "/reconcile") {
+            void service.runSync(true);
+            return json(res, 202, { accepted: true, reconcile: true });
+          }
           if (path === "/auth/send-code") {
             await service.sendCode();
             return json(res, 200, { sent: true });

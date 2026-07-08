@@ -87,6 +87,12 @@ export interface DiffContext {
    * ZenMoney account → emitted as a transfer instead of plain income.
    */
   transferSources?: Map<string, SourceAccount>;
+  /**
+   * One-off override: stamp transfer transactions with `changed = now` so they
+   * beat an existing income record or a ZenMoney deletion tombstone. Only
+   * affects deposits that became transfers; all other records stay stable.
+   */
+  reconcile?: boolean;
 }
 
 /**
@@ -143,10 +149,15 @@ export function accountToDiff(a: ZenAccount, ctx: DiffContext): DiffAccount {
 }
 
 export function transactionToDiff(tx: ZenTransaction, accountInstrument: string, ctx: DiffContext): DiffTransaction {
-  // stable: the transaction's own time, so a later app edit always wins
-  const changed = Math.floor(tx.date.getTime() / 1000);
   const m = tx.movements[0];
   const sum = m.sum ?? 0;
+  // A deposit whose on-chain source matched an existing ZenMoney account.
+  const source = sum > 0 ? ctx.transferSources?.get(tx.id ?? "") : undefined;
+
+  // Normally `changed` is the transaction's own time (stable → app edits always
+  // win). In reconcile mode, transfers use "now" so they override an existing
+  // income record or a deletion tombstone — a deliberate, scoped one-off.
+  const changed = source && ctx.reconcile ? Math.floor(Date.now() / 1000) : Math.floor(tx.date.getTime() / 1000);
   const instrId = requireInstrument(accountInstrument, ctx.instruments);
   const accId = "id" in m.account ? stableUuid(`account:${m.account.id}`) : stableUuid(`ref:${m.account.syncIds.join(",")}`);
   const payee = tx.merchant?.fullTitle ?? tx.merchant?.title ?? null;
@@ -165,10 +176,6 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
       opOutcomeInstrument = opInstr;
     }
   }
-
-  // A deposit (positive sum) whose on-chain source matched an existing ZenMoney
-  // account becomes a transfer: money in to the card, out from the source.
-  const source = sum > 0 ? ctx.transferSources?.get(tx.id ?? "") : undefined;
 
   return {
     id: stableUuid(`tx:${tx.id ?? m.id ?? `${+tx.date}:${sum}`}`),

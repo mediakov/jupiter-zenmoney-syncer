@@ -61,7 +61,7 @@ export function controlPanelHtml(): string {
 </div>
 
 <div class="card">
-  <div class="row"><strong>Status</strong> <button class="secondary" onclick="refresh()">Refresh</button> <button class="secondary" onclick="syncNow()">Sync now</button></div>
+  <div class="row"><strong>Status</strong> <button class="secondary" onclick="refresh()">Refresh</button> <button class="secondary" onclick="syncNow()">Sync now</button> <button class="secondary" onclick="reconcile()" title="One-off: force deposit→transfer conversions to override existing income / deletions">Reconcile transfers</button></div>
   <pre id="status">loading…</pre>
 </div>
 
@@ -88,6 +88,7 @@ export function controlPanelHtml(): string {
   async function verify() { const code = $("jup-code").value.trim(); if (!code) return alert("Enter the code first."); const { ok } = await post("/auth/verify", { code }); if (ok) { $("jup-code").value = ""; refresh(); } }
   async function saveZen() { const token = $("zen-token").value.trim(); if (!token) return alert("Paste a token first."); const { ok } = await post("/auth/zenmoney", { token }); if (ok) { $("zen-token").value = ""; refresh(); } }
   async function syncNow() { await post("/sync"); setTimeout(refresh, 800); }
+  async function reconcile() { if (confirm("Force deposit→transfer conversions to override existing income/deleted records? (one-off)")) { await post("/reconcile"); setTimeout(refresh, 1500); } }
   async function refresh() {
     const s = await fetch("/status").then((r) => r.json());
     $("status").textContent = JSON.stringify(s, null, 2);

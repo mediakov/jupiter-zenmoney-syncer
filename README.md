@@ -45,6 +45,7 @@ curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d 
 | GET | `/health` | liveness |
 | GET | `/status` | last sync result, timestamps, per-connection auth state |
 | POST | `/sync` | trigger an immediate sync |
+| POST | `/reconcile` | one-off sync that forces deposit→transfer conversions to override existing income/deleted records |
 | POST | `/auth/send-code` | send the Jupiter login OTP |
 | POST | `/auth/verify` | `{ "code": "…" }` complete Jupiter login |
 | POST | `/auth/zenmoney` | `{ "token": "…" }` set the ZenMoney API token |

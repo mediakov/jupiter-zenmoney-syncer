@@ -77,4 +77,12 @@ describe("transactionToDiff transfer emission", () => {
     expect(d.outcome).toBe(0);
     expect(d.outcomeAccount).not.toBe("wallet-uuid");
   });
+
+  it("transfer changed is stable normally, but 'now' under reconcile", () => {
+    const src = new Map([["txA", { accountId: "wallet-uuid", instrument: 3 }]]);
+    const normal = transactionToDiff(ztx, "USD", { instruments, userId: 1, transferSources: src });
+    expect(normal.changed).toBeLessThan(Math.floor(Date.now() / 1000) - 60); // stable (tx date)
+    const forced = transactionToDiff(ztx, "USD", { instruments, userId: 1, transferSources: src, reconcile: true });
+    expect(forced.changed).toBeGreaterThan(Math.floor(Date.now() / 1000) - 5); // ≈ now
+  });
 });
