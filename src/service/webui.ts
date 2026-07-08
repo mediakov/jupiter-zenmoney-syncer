@@ -286,9 +286,10 @@ export function controlPanelHtml(): string {
       : "sent this run: " + p.transactions + " tx" + (p.deletions ? " · " + p.deletions + " deletions" : "");
     $("zen-meta").textContent = z.accounts + " acct · " + z.transactions + " tx in window · " + sent;
 
-    // classification summary
+    // classification summary — totals over the whole window (not "this run")
     const c = z.counts, tot = z.totals;
     const summary =
+      '<div class="subhead">In window — ' + z.transactions + " tx total</div>" +
       '<div class="summary">' +
       "<span>" + kindBadge("expense") + " " + c.expense + ' &nbsp;<span class="neg">−' + money(tot.expense) + "</span></span>" +
       "<span>" + kindBadge("income") + " " + c.income + ' &nbsp;<span class="pos">+' + money(tot.income) + "</span></span>" +
@@ -308,11 +309,13 @@ export function controlPanelHtml(): string {
             "</td></tr>").join(""));
     }
 
-    // mapped transactions with classification
-    const txHtml =
-      '<div class="subhead">Mapped transactions (latest ' + z.transactionsSample.length + ")</div>" +
+    // what was actually sent to ZenMoney this run (the delta)
+    const sample = z.sentSample || [];
+    const txHtml = sample.length === 0
+      ? '<div class="subhead">Sent this run</div><div class="muted">Nothing new — all ' + z.transactions + " in-window transactions are already in ZenMoney.</div>"
+      : '<div class="subhead">Sent this run (' + sample.length + (p.transactions > sample.length ? " of " + p.transactions : "") + ")</div>" +
       rows("<tr><th>date</th><th>kind</th><th>amount</th><th>payee / source</th><th>mcc</th></tr>" +
-        z.transactionsSample.map((t) => {
+        sample.map((t) => {
           const sign = t.kind === "expense" ? "−" : "+";
           const cls = t.kind === "expense" ? "neg" : "pos";
           const who = t.kind === "transfer" ? "from " + esc(t.source || "?") : esc(t.payee || "");

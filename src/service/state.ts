@@ -47,11 +47,11 @@ export interface SyncDetail {
         /** What was actually sent to ZenMoney this run (the delta; 0 when nothing changed). */
         pushedThisRun: { accounts: number; transactions: number; deletions: number };
         serverTimestamp: number | null;
-        /** Per-kind counts + summed amounts (in the card account currency). */
+        /** Per-kind counts + summed amounts over the whole window (context, not "this run"). */
         counts: Record<SyncKind, number>;
         totals: Record<SyncKind, number>;
-        /** A sample of the most recent mapped transactions, with classification. */
-        transactionsSample: Array<{
+        /** The transactions actually sent to ZenMoney this run (the delta; empty when nothing changed). */
+        sentSample: Array<{
           date: string;
           kind: SyncKind;
           amount: number;

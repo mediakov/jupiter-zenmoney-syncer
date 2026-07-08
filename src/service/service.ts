@@ -229,6 +229,12 @@ export class SyncService {
             };
           });
 
+        // The sample of what was ACTUALLY sent this run (the delta). `mapped`,
+        // `diff.transactions`, and `txs` are all index-aligned (1:1 maps), so we
+        // pick the mapped rows whose diff id was in the push set.
+        const pushedIds = new Set(toPush.transactions.map((t) => t.id));
+        const sentMapped = mapped.filter((_, i) => pushedIds.has(diff.transactions[i].id));
+
         zenmoneyDetail = {
           pushed: true,
           accounts: diff.accounts.length,
@@ -242,7 +248,7 @@ export class SyncService {
           serverTimestamp: resp?.serverTimestamp ?? serverTimestamp,
           counts,
           totals,
-          transactionsSample: [...mapped].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 25),
+          sentSample: [...sentMapped].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 25),
           deposits,
         };
       } else {
