@@ -5,3 +5,4 @@ transactions-*.json
 .DS_Store
 *.log
 .jup-credentials.json
+.jup-sigcache.json
