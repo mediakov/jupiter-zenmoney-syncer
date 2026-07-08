@@ -44,6 +44,7 @@ describe("control server", () => {
     sendCode: async () => void calls.push("sendCode"),
     verifyCode: async (code: string) => void calls.push("verify:" + code),
     setZenToken: (token: string) => void calls.push("zen:" + token),
+    getLastDetail: () => null,
   } as unknown as SyncService;
   const config = { serviceToken: "secret" } as ServiceConfig;
 
@@ -103,6 +104,14 @@ describe("control server", () => {
     });
     expect(ok.status).toBe(200);
     expect(calls).toContain("zen:zen_abc");
+  });
+
+  it("GET /last-sync is guarded and returns empty when no sync yet", async () => {
+    const noAuth = await fetch(base + "/last-sync");
+    expect(noAuth.status).toBe(401);
+    const ok = await fetch(base + "/last-sync", { headers: { authorization: "Bearer secret" } });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ empty: true });
   });
 
   it("unknown route → 404", async () => {

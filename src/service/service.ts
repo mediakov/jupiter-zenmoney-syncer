@@ -4,7 +4,7 @@ import { scrapeToDiff } from "../toDiff.js";
 import { ZenMoneyClient } from "../zenClient.js";
 import type { ServiceConfig } from "./config.js";
 import { CredentialStore } from "./credentials.js";
-import { initialState, type ServiceState } from "./state.js";
+import { initialState, type ServiceState, type SyncDetail } from "./state.js";
 
 type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) => void;
 
@@ -18,6 +18,7 @@ export class SyncService {
   private readonly creds: CredentialStore;
   private zen: ZenMoneyClient | null;
   private readonly state: ServiceState = initialState();
+  private lastDetail: SyncDetail | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -47,6 +48,11 @@ export class SyncService {
 
   getState(): Readonly<ServiceState> {
     return this.state;
+  }
+
+  /** Detail of the last sync: what we read from Jupiter and pushed to ZenMoney. */
+  getLastDetail(): SyncDetail | null {
+    return this.lastDetail;
   }
 
   /** Begin the schedule; runs an initial sync if already authenticated. */
@@ -97,14 +103,49 @@ export class SyncService {
       for (const year of this.config.years) txs.push(...(await this.jupiter.transactions.all({ year })));
       const scrape = toScrapeResult(cards, balance, txs);
 
+      // what we received from Jupiter (sample the most recent transactions)
+      const jupiterDetail: SyncDetail["jupiter"] = {
+        cards: cards.map((c) => ({ last4: c.last4, status: c.status })),
+        balance: { currency: balance.currency, spendableBalance: balance.spendableBalance, withdrawableBalance: balance.withdrawableBalance },
+        transactionCount: txs.length,
+        transactions: [...txs]
+          .sort((a, b) => (a.transactionTimestamp < b.transactionTimestamp ? 1 : -1))
+          .slice(0, 20)
+          .map((t) => ({
+            id: t.id,
+            date: t.transactionTimestamp,
+            direction: t.direction,
+            amount: t.settlementAmount,
+            currency: t.settlementCurrency,
+            merchant: t.card?.merchantName ?? null,
+          })),
+      };
+
       let pushed = false;
+      let zenmoneyDetail: SyncDetail["zenmoney"];
       if (this.zen && !this.config.dryRun) {
         const { map, serverTimestamp } = await this.zen.instruments();
         const diff = scrapeToDiff(scrape, map);
-        await this.zen.push(diff.accounts, diff.transactions, serverTimestamp);
+        const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp);
         pushed = true;
+        zenmoneyDetail = {
+          pushed: true,
+          accounts: diff.accounts.length,
+          transactions: diff.transactions.length,
+          serverTimestamp: resp?.serverTimestamp ?? null,
+          transactionsSample: diff.transactions.slice(0, 20).map((t) => ({
+            id: t.id,
+            date: t.date,
+            income: t.income,
+            outcome: t.outcome,
+            payee: t.payee,
+          })),
+        };
+      } else {
+        zenmoneyDetail = { pushed: false, reason: this.config.dryRun ? "dry-run" : "no ZenMoney token" };
       }
 
+      this.lastDetail = { at: new Date().toISOString(), jupiter: jupiterDetail, zenmoney: zenmoneyDetail };
       this.state.lastResult = { accounts: scrape.accounts.length, transactions: scrape.transactions.length, pushed };
       this.state.lastSyncOk = true;
       this.state.lastError = null;

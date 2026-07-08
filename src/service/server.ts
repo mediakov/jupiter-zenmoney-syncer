@@ -50,6 +50,11 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
         }
         if (method === "GET" && path === "/health") return json(res, 200, { ok: true });
         if (method === "GET" && path === "/status") return json(res, 200, service.getState());
+        if (method === "GET" && path === "/last-sync") {
+          // contains account/transaction data — guard it when a token is configured
+          if (!authed(req)) return json(res, 401, { error: "unauthorized" });
+          return json(res, 200, service.getLastDetail() ?? { empty: true });
+        }
 
         // ── mutating routes below ──
         if (method === "POST" && (path === "/sync" || path.startsWith("/auth/"))) {

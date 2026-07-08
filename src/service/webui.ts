@@ -27,6 +27,11 @@ export function controlPanelHtml(): string {
   .bad { background: #dc262622; color: #dc2626; }
   .muted { color: #8a8a8a; font-size: .85rem; }
   pre { background: #8881; padding: .75rem; border-radius: 8px; overflow: auto; font-size: .8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #8882; white-space: nowrap; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .neg { color: #dc2626; } .pos { color: #16a34a; }
+  .scroll { max-height: 340px; overflow: auto; }
 </style>
 </head>
 <body>
@@ -60,6 +65,16 @@ export function controlPanelHtml(): string {
   <pre id="status">loading…</pre>
 </div>
 
+<div class="card">
+  <div class="row"><strong>⬇ Received from Jupiter</strong> <span id="jup-meta" class="muted"></span></div>
+  <div id="jup-data" class="muted">no sync yet</div>
+</div>
+
+<div class="card">
+  <div class="row"><strong>⬆ Pushed to ZenMoney</strong> <span id="zen-meta" class="muted"></span></div>
+  <div id="zen-data" class="muted">no sync yet</div>
+</div>
+
 <script>
   const $ = (id) => document.getElementById(id);
   const headers = () => { const t = $("admin").value.trim(); const h = { "content-type": "application/json" }; if (t) h.authorization = "Bearer " + t; return h; };
@@ -78,8 +93,42 @@ export function controlPanelHtml(): string {
     $("status").textContent = JSON.stringify(s, null, 2);
     setPill("jup-pill", s.authenticated, "connected", "needs login");
     setPill("zen-pill", s.zenConnected, "connected", "no token");
+    refreshDetail();
   }
   function setPill(id, ok, okText, badText) { const e = $(id); e.textContent = ok ? okText : badText; e.className = "pill " + (ok ? "ok" : "bad"); }
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  function rows(html) { return '<div class="scroll"><table>' + html + "</table></div>"; }
+  async function refreshDetail() {
+    const r = await fetch("/last-sync", { headers: headers() });
+    if (r.status === 401) { $("jup-data").textContent = "enter Admin token to view data"; $("zen-data").textContent = ""; return; }
+    const d = await r.json().catch(() => ({}));
+    if (!d || d.empty) { $("jup-data").textContent = "no sync yet"; $("zen-data").textContent = "no sync yet"; return; }
+    // Jupiter
+    const j = d.jupiter;
+    const bal = j.balance ? j.balance.spendableBalance + " " + j.balance.currency : "—";
+    $("jup-meta").textContent = "@ " + new Date(d.at).toLocaleString();
+    $("jup-data").innerHTML =
+      '<div class="muted">cards: ' + j.cards.map((c) => "•" + esc(c.last4) + " (" + esc(c.status) + ")").join(", ") +
+      " · balance: " + esc(bal) + " · " + j.transactionCount + " transactions</div>" +
+      rows("<tr><th>date</th><th>dir</th><th>amount</th><th>merchant</th></tr>" +
+        j.transactions.map((t) =>
+          "<tr><td>" + esc(t.date.slice(0, 10)) + "</td><td>" + esc(t.direction) +
+          '</td><td class="num ' + (t.direction === "CREDIT" ? "pos" : "neg") + '">' + esc(t.amount) + " " + esc(t.currency) +
+          "</td><td>" + esc(t.merchant || "") + "</td></tr>").join(""));
+    // ZenMoney
+    const z = d.zenmoney;
+    if (!z.pushed) {
+      $("zen-meta").textContent = "";
+      $("zen-data").innerHTML = '<div class="muted">not pushed — ' + esc(z.reason) + "</div>";
+    } else {
+      $("zen-meta").textContent = z.accounts + " account(s), " + z.transactions + " tx";
+      $("zen-data").innerHTML =
+        rows("<tr><th>date</th><th>income</th><th>outcome</th><th>payee</th></tr>" +
+          z.transactionsSample.map((t) =>
+            "<tr><td>" + esc(t.date) + '</td><td class="num pos">' + (t.income || "") +
+            '</td><td class="num neg">' + (t.outcome || "") + "</td><td>" + esc(t.payee || "") + "</td></tr>").join(""));
+    }
+  }
   refresh(); setInterval(refresh, 5000);
 </script>
 </body>

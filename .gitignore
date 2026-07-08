@@ -4,3 +4,4 @@ node_modules/
 transactions-*.json
 .DS_Store
 *.log
+.jup-credentials.json
