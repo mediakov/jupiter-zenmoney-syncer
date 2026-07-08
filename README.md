@@ -59,7 +59,7 @@ is set (the web UI has an "Admin token" box for it).
 | `JUP_EMAIL` | — | required |
 | `ZEN_TOKEN` | — | required unless `DRY_RUN=1` |
 | `SYNC_INTERVAL` | `6h` | e.g. `30m`, `1d` |
-| `SYNC_YEARS` | current year | e.g. `2025,2026` |
+| `SYNC_YEARS` | current + previous year | e.g. `2025,2026` |
 | `SESSION_FILE` | `/data/.jup-session.json` | mount a volume |
 | `DRY_RUN` | — | `1` = read+convert, no push |
 | `PORT` | `8080` | control server |
@@ -125,11 +125,32 @@ await sync({ jupiter, zen, year: 2026 });
 
 - ✅ Adapter (`movements`→diff, sign conventions, `op*` currency fields, stable
   ids) is unit-tested (`npm test`).
-- ⏳ Live push requires your real `ZEN_TOKEN` + Jupiter OTP — not exercised in CI.
-  Use `--dry-run` first to inspect the payload.
+- ✅ **Live push validated** against `api.zenmoney.ru` end-to-end (real card
+  account + transactions accepted). Use `DRY_RUN=1` to preview without pushing.
 
 ## Model
 
 Card-only, income/expense: one `ccard` USD account; card purchases → expense
 with merchant + MCC (+ original-currency `op*` on conversions); USDC
 deposits/withdrawals → income/expense with the on-chain signature in the comment.
+Re-syncs are idempotent — every record uses a deterministic UUID (v5), so running
+again updates rather than duplicates.
+
+## ZenMoney diff format notes
+
+The ZenMoney `/v8/diff` API rejects incomplete objects with
+`validationError`. These are the non-obvious required fields it needs (learned by
+iterating on the real API), all handled in `src/toDiff.ts`:
+
+**Account** — `user` (your ZenMoney user id), `private` (bool), and the
+loan/deposit-only fields sent as `null` (`capitalization`, `percent`, `startDate`,
+`endDateOffset`, `endDateOffsetInterval`, `payoffStep`, `payoffInterval`), plus
+`changed`, `inBalance`, `savings`, `archive`, `enableCorrection`, `enableSMS`.
+
+**Transaction** — `user`, `changed`, `created`, `deleted`, and
+`incomeBankID` / `outcomeBankID` (nullable), alongside the
+income/outcome/instrument/account fields and `date` (`yyyy-MM-dd`).
+
+The **user id** is fetched from the diff response (`context()` uses
+`forceFetch: ["instrument", "user"]` → `user[0].id`), and the **instrument id**
+for each currency is resolved from the same response's instrument table.

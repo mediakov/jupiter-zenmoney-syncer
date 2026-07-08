@@ -45,9 +45,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   const zenToken = env.ZEN_TOKEN ?? null;
 
   const now = new Date().getUTCFullYear();
+  // default to current + previous year so late-posting transactions near a
+  // year boundary aren't missed.
   const years = env.SYNC_YEARS
     ? env.SYNC_YEARS.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
-    : [now];
+    : [now - 1, now];
 
   return {
     jupiterEmail,
@@ -55,7 +57,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     sessionFile: env.SESSION_FILE ?? "/data/.jup-session.json",
     credFile: env.CRED_FILE ?? "/data/credentials.json",
     intervalMs: parseDuration(env.SYNC_INTERVAL, 6 * 3_600_000),
-    years: years.length ? years : [now],
+    years: years.length ? years : [now - 1, now],
     dryRun,
     port: Number(env.PORT ?? 8080),
     serviceToken: env.SERVICE_TOKEN ?? null,
