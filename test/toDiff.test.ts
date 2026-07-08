@@ -4,6 +4,7 @@ import { stableUuid } from "../src/ids.js";
 import type { ScrapeResult, ZenAccount, ZenTransaction } from "../src/zenTypes.js";
 
 const instruments = (code: string) => ({ USD: 1, EUR: 2, USDC: 3 })[code.toUpperCase()];
+const ctx = { instruments, userId: 7 };
 
 const account: ZenAccount = {
   id: "acct_1",
@@ -30,20 +31,20 @@ function ztx(over: Partial<ZenTransaction> & { sum: number; invoice?: { sum: num
 
 describe("accountToDiff", () => {
   it("maps to diff account with integer instrument + stable id", () => {
-    const d = accountToDiff(account, instruments);
+    const d = accountToDiff(account, ctx);
     expect(d.instrument).toBe(1);
     expect(d.type).toBe("ccard");
     expect(d.syncID).toEqual(["1234"]);
     expect(d.id).toBe(stableUuid("account:acct_1"));
   });
   it("throws on unknown currency", () => {
-    expect(() => accountToDiff({ ...account, instrument: "XXX" }, instruments)).toThrow(/instrument/i);
+    expect(() => accountToDiff({ ...account, instrument: "XXX" }, ctx)).toThrow(/instrument/i);
   });
 });
 
 describe("transactionToDiff", () => {
   it("negative sum → outcome", () => {
-    const d = transactionToDiff(ztx({ sum: -10 }), "USD", instruments);
+    const d = transactionToDiff(ztx({ sum: -10 }), "USD", ctx);
     expect(d.outcome).toBe(10);
     expect(d.income).toBe(0);
     expect(d.outcomeInstrument).toBe(1);
@@ -53,20 +54,20 @@ describe("transactionToDiff", () => {
   });
 
   it("positive sum → income", () => {
-    const d = transactionToDiff(ztx({ sum: 5 }), "USD", instruments);
+    const d = transactionToDiff(ztx({ sum: 5 }), "USD", ctx);
     expect(d.income).toBe(5);
     expect(d.outcome).toBe(0);
   });
 
   it("invoice → op fields (foreign outcome)", () => {
-    const d = transactionToDiff(ztx({ sum: -11, invoice: { sum: -10, instrument: "EUR" } }), "USD", instruments);
+    const d = transactionToDiff(ztx({ sum: -11, invoice: { sum: -10, instrument: "EUR" } }), "USD", ctx);
     expect(d.opOutcome).toBe(10);
     expect(d.opOutcomeInstrument).toBe(2);
   });
 
   it("same transaction id → same diff id (idempotent)", () => {
-    const a = transactionToDiff(ztx({ sum: -10 }), "USD", instruments);
-    const b = transactionToDiff(ztx({ sum: -10 }), "USD", instruments);
+    const a = transactionToDiff(ztx({ sum: -10 }), "USD", ctx);
+    const b = transactionToDiff(ztx({ sum: -10 }), "USD", ctx);
     expect(a.id).toBe(b.id);
     expect(a.id).toBe(stableUuid("tx:tx_1"));
   });
@@ -75,7 +76,7 @@ describe("transactionToDiff", () => {
 describe("scrapeToDiff", () => {
   it("converts a full scrape result", () => {
     const scrape: ScrapeResult = { accounts: [account], transactions: [ztx({ sum: -10 }), ztx({ sum: 5, id: "tx_2" })] };
-    const d = scrapeToDiff(scrape, instruments);
+    const d = scrapeToDiff(scrape, ctx);
     expect(d.accounts).toHaveLength(1);
     expect(d.transactions).toHaveLength(2);
     expect(d.transactions[0]!.outcomeAccount).toBe(stableUuid("account:acct_1"));

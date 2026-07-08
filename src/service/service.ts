@@ -124,8 +124,8 @@ export class SyncService {
       let pushed = false;
       let zenmoneyDetail: SyncDetail["zenmoney"];
       if (this.zen && !this.config.dryRun) {
-        const { map, serverTimestamp } = await this.zen.instruments();
-        const diff = scrapeToDiff(scrape, map);
+        const { map, userId, serverTimestamp } = await this.zen.context();
+        const diff = scrapeToDiff(scrape, { instruments: map, userId });
         const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp);
         pushed = true;
         zenmoneyDetail = {

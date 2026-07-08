@@ -10,6 +10,7 @@ interface Instrument {
 interface DiffResponse {
   serverTimestamp: number;
   instrument?: Instrument[];
+  user?: Array<{ id: number }>;
   [k: string]: unknown;
 }
 
@@ -54,17 +55,23 @@ export class ZenMoneyClient {
     return JSON.parse(text) as DiffResponse;
   }
 
-  /** Fetch the instrument table and return `{ map, serverTimestamp }`. */
-  async instruments(): Promise<{ map: InstrumentMap; serverTimestamp: number }> {
+  /**
+   * Fetch the instrument table + the account owner's user id (both required to
+   * build a valid diff). Returns `{ map, userId, serverTimestamp }`.
+   */
+  async context(): Promise<{ map: InstrumentMap; userId: number; serverTimestamp: number }> {
     const res = await this.diff({
       currentClientTimestamp: this.now(),
       serverTimestamp: this.now() - 1,
-      forceFetch: ["instrument"],
+      forceFetch: ["instrument", "user"],
     });
     const byCode = new Map<string, number>();
     for (const i of res.instrument ?? []) byCode.set(i.shortTitle.toUpperCase(), i.id);
+    const userId = res.user?.[0]?.id;
+    if (userId == null) throw new Error("ZenMoney: could not determine user id (no user in diff response)");
     return {
       map: (code: string) => byCode.get(code.toUpperCase()),
+      userId,
       serverTimestamp: res.serverTimestamp,
     };
   }

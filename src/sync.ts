@@ -36,9 +36,9 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
   // 2. shared converter → ZenMoney plugin (movements) format
   const scrape = toScrapeResult(cards, balance, transactions);
 
-  // 3. resolve instruments, then adapt movements → diff format
-  const { map, serverTimestamp } = await zen.instruments();
-  const diff = scrapeToDiff(scrape, map);
+  // 3. resolve instruments + user id, then adapt movements → diff format
+  const { map, userId, serverTimestamp } = await zen.context();
+  const diff = scrapeToDiff(scrape, { instruments: map, userId });
 
   // 4. push (unless dry run)
   if (!opts.dryRun) {
