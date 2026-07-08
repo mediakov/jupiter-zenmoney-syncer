@@ -1,7 +1,7 @@
 /** Service configuration, parsed from environment variables. */
 export interface ServiceConfig {
-  /** Jupiter account email (required). */
-  jupiterEmail: string;
+  /** Jupiter account email. Optional — can be provided later via the web UI/API. */
+  jupiterEmail: string | null;
   /** ZenMoney API token. Optional in dry-run mode (no push). */
   zenToken: string | null;
   /** Path to persist the Jupiter session (mount a volume in Docker). */
@@ -40,8 +40,8 @@ export function parseDuration(v: string | undefined, fallbackMs: number): number
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
-  const jupiterEmail = env.JUP_EMAIL;
-  if (!jupiterEmail) throw new Error("JUP_EMAIL is required");
+  // JUP_EMAIL is optional: it can be provided later via the web UI / API.
+  const jupiterEmail = env.JUP_EMAIL ?? null;
 
   const dryRun = env.DRY_RUN === "1" || env.DRY_RUN === "true";
   // ZEN_TOKEN is optional: it can be provided later via the web UI / API.

@@ -18,8 +18,9 @@ describe("parseDuration", () => {
 });
 
 describe("loadConfig", () => {
-  it("requires JUP_EMAIL", () => {
-    expect(() => loadConfig({})).toThrow(/JUP_EMAIL/);
+  it("JUP_EMAIL is optional (can be provided later via UI)", () => {
+    expect(loadConfig({} as any).jupiterEmail).toBeNull();
+    expect(loadConfig({ JUP_EMAIL: "a@b.c" } as any).jupiterEmail).toBe("a@b.c");
   });
   it("ZEN_TOKEN is optional (can be provided later via UI)", () => {
     const c = loadConfig({ JUP_EMAIL: "a@b.c" } as any);
@@ -38,11 +39,13 @@ describe("control server", () => {
   let server: ReturnType<typeof createControlServer>;
   let base: string;
   const calls: string[] = [];
+  let mockEmail: string | null = null;
   const fakeService = {
-    getState: () => ({ ...initialState(), status: "idle" }),
+    getState: () => ({ ...initialState(), status: "idle", jupiterEmail: mockEmail }),
     runSync: async () => void calls.push("runSync"),
     sendCode: async () => void calls.push("sendCode"),
     verifyCode: async (code: string) => void calls.push("verify:" + code),
+    setJupiterEmail: (email: string) => { mockEmail = email; calls.push("email:" + email); },
     setZenToken: (token: string) => void calls.push("zen:" + token),
     getLastDetail: () => null,
   } as unknown as SyncService;
@@ -72,6 +75,25 @@ describe("control server", () => {
     const ok = await fetch(base + "/sync", { method: "POST", headers: { authorization: "Bearer secret" } });
     expect(ok.status).toBe(202);
     expect(calls).toContain("runSync");
+  });
+
+  it("POST /auth/send-code sets the email, then sends", async () => {
+    const noEmail = await fetch(base + "/auth/send-code", { method: "POST", headers: { authorization: "Bearer secret" } });
+    expect(noEmail.status).toBe(400); // no email set yet
+    const badEmail = await fetch(base + "/auth/send-code", {
+      method: "POST",
+      headers: { authorization: "Bearer secret", "content-type": "application/json" },
+      body: JSON.stringify({ email: "not-an-email" }),
+    });
+    expect(badEmail.status).toBe(400);
+    const ok = await fetch(base + "/auth/send-code", {
+      method: "POST",
+      headers: { authorization: "Bearer secret", "content-type": "application/json" },
+      body: JSON.stringify({ email: "new@user.com" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(calls).toContain("email:new@user.com");
+    expect(calls).toContain("sendCode");
   });
 
   it("POST /auth/verify needs a code", async () => {

@@ -11,28 +11,29 @@ Jupiter Card ──(jupiter-card-sdk)──▶ shared converter ──(movements
 ## Long-running service
 
 An always-on daemon that syncs on a schedule and exposes a small web UI + HTTP API.
-`ZEN_TOKEN` is optional at startup — you can connect ZenMoney from the UI instead.
+Both `JUP_EMAIL` and `ZEN_TOKEN` are optional at startup — you can connect
+Jupiter and ZenMoney entirely from the UI instead.
 
 ```bash
 # Docker (recommended)
-JUP_EMAIL=you@example.com docker compose up -d
+docker compose up -d
 
 # or directly
-JUP_EMAIL=you@example.com npm run serve
+npm run serve
 ```
 
 **Bootstrap in the browser (easiest):** open **http://localhost:8080** and use the
 control panel:
-1. **Jupiter** → click *Send login code* → paste the 6-digit code from your email → *Verify*.
+1. **Jupiter** → enter your account email → click *Send code* → paste the 6-digit code from your email → *Verify*.
 2. **ZenMoney** → paste your API token → *Save token*.
 
-Both are persisted (on the `/data` volume). After the first Jupiter code the
+All are persisted (on the `/data` volume). After the first Jupiter code the
 session auto-refreshes, so it runs unattended within the ~7-day refresh window as
 long as it syncs at least once per window.
 
 **Or bootstrap via the API** (same thing, headless):
 ```bash
-curl -XPOST localhost:8080/auth/send-code
+curl -XPOST localhost:8080/auth/send-code -H 'content-type: application/json' -d '{"email":"you@example.com"}'
 curl -XPOST localhost:8080/auth/verify   -H 'content-type: application/json' -d '{"code":"123456"}'
 curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d '{"token":"ZEN_API_TOKEN"}'
 ```
@@ -45,7 +46,7 @@ curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d 
 | GET | `/health` | liveness |
 | GET | `/status` | last sync result, timestamps, per-connection auth state |
 | POST | `/sync` | trigger an immediate sync |
-| POST | `/auth/send-code` | send the Jupiter login OTP |
+| POST | `/auth/send-code` | `{ "email"?: "…" }` set the Jupiter email (if given) and send the login OTP |
 | POST | `/auth/verify` | `{ "code": "…" }` complete Jupiter login |
 | POST | `/auth/zenmoney` | `{ "token": "…" }` set the ZenMoney API token |
 
@@ -56,8 +57,8 @@ is set (the web UI has an "Admin token" box for it).
 
 | Var | Default | Notes |
 |---|---|---|
-| `JUP_EMAIL` | — | required |
-| `ZEN_TOKEN` | — | required unless `DRY_RUN=1` |
+| `JUP_EMAIL` | — | optional; can be set later via the UI/API |
+| `ZEN_TOKEN` | — | required unless `DRY_RUN=1`; can be set later via the UI/API |
 | `SYNC_INTERVAL` | `6h` | e.g. `30m`, `1d` |
 | `SYNC_YEARS` | current + previous year | e.g. `2025,2026` |
 | `SESSION_FILE` | `/data/.jup-session.json` | mount a volume |

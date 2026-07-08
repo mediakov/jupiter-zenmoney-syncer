@@ -3,7 +3,7 @@
  * Long-running Jupiter → ZenMoney sync service.
  *
  * Env:
- *   JUP_EMAIL       (required)  Jupiter account email
+ *   JUP_EMAIL       (optional)  Jupiter account email; can be set later via the UI/API
  *   ZEN_TOKEN       (required unless DRY_RUN=1)  ZenMoney API token
  *   SYNC_INTERVAL   default 6h  e.g. "30m", "6h", "1d"
  *   SYNC_YEARS      default current year, e.g. "2025,2026"
@@ -12,8 +12,8 @@
  *   PORT            default 8080
  *   SERVICE_TOKEN   optional bearer token protecting POST routes
  *
- * First run needs a one-time OTP:
- *   curl -XPOST localhost:8080/auth/send-code
+ * First run needs the email + a one-time OTP:
+ *   curl -XPOST localhost:8080/auth/send-code -d '{"email":"you@example.com"}'
  *   curl -XPOST localhost:8080/auth/verify -d '{"code":"123456"}'
  * After that the saved session auto-refreshes and it runs unattended.
  */

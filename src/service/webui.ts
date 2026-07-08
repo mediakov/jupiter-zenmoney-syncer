@@ -55,7 +55,10 @@ export function controlPanelHtml(): string {
 
 <div class="card">
   <div class="row"><strong>Jupiter</strong> <span id="jup-pill" class="pill bad">checking…</span></div>
-  <div class="row"><button id="btn-sendcode" onclick="sendCode(this)">1. Send login code to email</button></div>
+  <div class="row">
+    <input id="jup-email" type="email" autocomplete="email" placeholder="Jupiter account email" />
+    <button id="btn-sendcode" onclick="sendCode(this)">1. Send code</button>
+  </div>
   <div class="row">
     <input id="jup-code" inputmode="numeric" placeholder="Paste the 6-digit code" />
     <button id="btn-verify" onclick="verify(this)">2. Verify</button>
@@ -134,9 +137,12 @@ export function controlPanelHtml(): string {
   }
 
   async function sendCode(btn) {
+    const email = $("jup-email").value.trim();
+    if (!email) return toast("Enter your Jupiter email first.", "bad");
     await withBusy(btn, "Sending…", async () => {
-      const { ok, j } = await post("/auth/send-code");
+      const { ok, j } = await post("/auth/send-code", { email });
       toast(ok ? "Code sent — check your email." : "Send failed: " + (j.error || "error"), ok ? "ok" : "bad");
+      if (ok) await refresh();
     });
   }
   async function verify(btn) {
@@ -189,7 +195,9 @@ export function controlPanelHtml(): string {
     lastStatus = s;
     $("status").textContent = JSON.stringify(s, null, 2);
     $("status-sum").textContent = summarize(s);
-    setPill("jup-pill", s.authenticated, "connected", "needs login");
+    // prefill the email once, but never clobber what the user is typing
+    if (s.jupiterEmail && document.activeElement !== $("jup-email") && !$("jup-email").value) $("jup-email").value = s.jupiterEmail;
+    setPill("jup-pill", s.authenticated, "connected", s.jupiterEmail ? "needs login" : "set email");
     setPill("zen-pill", s.zenConnected, "connected", "no token");
     applyState();
     await refreshDetail();
@@ -256,6 +264,7 @@ export function controlPanelHtml(): string {
     }
   }
   // Enter submits the adjacent action.
+  $("jup-email").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCode($("btn-sendcode")); });
   $("jup-code").addEventListener("keydown", (e) => { if (e.key === "Enter") verify($("btn-verify")); });
   $("zen-token").addEventListener("keydown", (e) => { if (e.key === "Enter") saveZen($("btn-savezen")); });
 

@@ -2,12 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
- * Persists UI-provided credentials (currently the ZenMoney API token) so they
- * survive restarts — the same idea as the Jupiter session file. Treat the file
- * like a secret; it's created 0600 and belongs on the mounted /data volume.
+ * Persists UI-provided credentials (the ZenMoney API token and the Jupiter
+ * account email) so they survive restarts — the same idea as the Jupiter session
+ * file. Treat the file like a secret; it's created 0600 and belongs on the
+ * mounted /data volume.
  */
 export interface StoredCredentials {
   zenToken?: string;
+  jupiterEmail?: string;
 }
 
 export class CredentialStore {
@@ -29,6 +31,15 @@ export class CredentialStore {
 
   setZenToken(token: string): void {
     this.data.zenToken = token;
+    this.flush();
+  }
+
+  get jupiterEmail(): string | undefined {
+    return this.data.jupiterEmail;
+  }
+
+  setJupiterEmail(email: string): void {
+    this.data.jupiterEmail = email;
     this.flush();
   }
 

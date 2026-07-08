@@ -1,6 +1,8 @@
 /** Live, in-memory service state exposed via GET /status. */
 export interface ServiceState {
   startedAt: string;
+  /** Jupiter account email in use (env, UI-provided, or null if unset). */
+  jupiterEmail: string | null;
   /** Jupiter session established. */
   authenticated: boolean;
   /** ZenMoney token available (env or UI-provided). */
@@ -46,6 +48,7 @@ export interface SyncDetail {
 export function initialState(): ServiceState {
   return {
     startedAt: new Date().toISOString(),
+    jupiterEmail: null,
     authenticated: false,
     zenConnected: false,
     status: "starting",

@@ -16,7 +16,8 @@ type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) =
  * service — they're recorded in state and the loop continues.
  */
 export class SyncService {
-  private readonly jupiter: JupiterCard;
+  private jupiter: JupiterCard | null;
+  private jupiterEmail: string | null;
   private readonly creds: CredentialStore;
   private readonly solana: SolanaResolver;
   private readonly sigCache: SignatureCache;
@@ -30,18 +31,34 @@ export class SyncService {
     private readonly config: ServiceConfig,
     private readonly log: Logger = () => {},
   ) {
-    this.jupiter = new JupiterCard({
-      auth: { kind: "email", email: config.jupiterEmail, sessionFile: config.sessionFile },
-    });
     this.creds = new CredentialStore(config.credFile);
+    // Jupiter email: env takes precedence, else a previously UI-provided one.
+    this.jupiterEmail = config.jupiterEmail ?? this.creds.jupiterEmail ?? null;
+    this.jupiter = this.jupiterEmail ? this.buildJupiter(this.jupiterEmail) : null;
     this.solana = new SolanaResolver({ rpc: config.solanaRpc });
     this.sigCache = new SignatureCache(config.sigCacheFile);
     // ZenMoney token: env takes precedence, else a previously UI-provided one.
     const token = config.zenToken ?? this.creds.zenToken ?? null;
     this.zen = token ? new ZenMoneyClient({ token }) : null;
-    this.state.authenticated = this.jupiter.isAuthenticated();
+    this.state.jupiterEmail = this.jupiterEmail;
+    this.state.authenticated = this.jupiter?.isAuthenticated() ?? false;
     this.state.zenConnected = this.zen != null;
     this.state.status = this.state.authenticated ? "idle" : "needs-auth";
+  }
+
+  private buildJupiter(email: string): JupiterCard {
+    return new JupiterCard({ auth: { kind: "email", email, sessionFile: this.config.sessionFile } });
+  }
+
+  /** Set (or change) the Jupiter account email (from the web UI/API); rebuilds the client. */
+  setJupiterEmail(email: string): void {
+    this.jupiterEmail = email;
+    this.creds.setJupiterEmail(email);
+    this.jupiter = this.buildJupiter(email);
+    this.state.jupiterEmail = email;
+    this.state.authenticated = this.jupiter.isAuthenticated();
+    this.state.status = this.state.authenticated ? "idle" : "needs-auth";
+    this.log("info", `Jupiter email set: ${email}`);
   }
 
   /** Store a ZenMoney API token (from the web UI/API) and start using it. */
@@ -69,8 +86,8 @@ export class SyncService {
       void this.runSync();
     };
     this.timer = setInterval(tick, this.config.intervalMs);
-    if (this.jupiter.isAuthenticated()) tick();
-    else this.log("warn", "not authenticated — call POST /auth/send-code then /auth/verify");
+    if (this.jupiter?.isAuthenticated()) tick();
+    else this.log("warn", "not authenticated — set the Jupiter email, then POST /auth/send-code and /auth/verify");
   }
 
   stop(): void {
@@ -80,12 +97,14 @@ export class SyncService {
 
   /** Send the Jupiter login OTP to the configured email. */
   async sendCode(): Promise<void> {
+    if (!this.jupiter) throw new Error("Jupiter email not set — provide it first");
     await this.jupiter.login.sendCode();
-    this.log("info", "OTP sent to Jupiter email");
+    this.log("info", `OTP sent to ${this.jupiterEmail}`);
   }
 
   /** Complete Jupiter login with the emailed code, then kick off a sync. */
   async verifyCode(code: string): Promise<void> {
+    if (!this.jupiter) throw new Error("Jupiter email not set — provide it first");
     await this.jupiter.login.verify(code);
     this.state.authenticated = true;
     this.state.status = "idle";
@@ -96,7 +115,8 @@ export class SyncService {
   /** Run one sync across all configured years. Safe to call concurrently (guarded). */
   async runSync(): Promise<void> {
     if (this.running) return;
-    if (!this.jupiter.isAuthenticated()) {
+    const jup = this.jupiter;
+    if (!jup || !jup.isAuthenticated()) {
       this.state.status = "needs-auth";
       this.state.authenticated = false;
       return;
@@ -104,9 +124,9 @@ export class SyncService {
     this.running = true;
     this.state.status = "syncing";
     try {
-      const [cards, balance] = await Promise.all([this.jupiter.cards.list(), this.jupiter.cards.balance()]);
+      const [cards, balance] = await Promise.all([jup.cards.list(), jup.cards.balance()]);
       const txs = [];
-      for (const year of this.config.years) txs.push(...(await this.jupiter.transactions.all({ year })));
+      for (const year of this.config.years) txs.push(...(await jup.transactions.all({ year })));
       const scrape = toScrapeResult(cards, balance, txs);
 
       // what we received from Jupiter (sample the most recent transactions)
@@ -169,7 +189,7 @@ export class SyncService {
       this.state.lastError = e instanceof Error ? e.message : String(e);
       this.log("error", `sync failed: ${this.state.lastError}`);
       // if the Jupiter session died beyond refresh, surface it for re-auth
-      if (!this.jupiter.isAuthenticated()) {
+      if (!this.jupiter?.isAuthenticated()) {
         this.state.authenticated = false;
         this.state.status = "needs-auth";
       }

@@ -7,9 +7,9 @@ import { controlPanelHtml } from "./webui.js";
  * Minimal HTTP control/status surface (no framework):
  *   GET  /health           liveness
  *   GET  /status           current service state
- *   POST /sync             trigger an immediate sync           (protected)
- *   POST /auth/send-code   send the Jupiter login OTP          (protected)
- *   POST /auth/verify      { code } complete login             (protected)
+ *   POST /sync             trigger an immediate sync                 (protected)
+ *   POST /auth/send-code   { email? } set email + send login OTP     (protected)
+ *   POST /auth/verify      { code } complete login                   (protected)
  *
  * Mutating routes require `Authorization: Bearer <SERVICE_TOKEN>` when a
  * serviceToken is configured.
@@ -65,6 +65,13 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
             return json(res, 202, { accepted: true });
           }
           if (path === "/auth/send-code") {
+            const body = (await readBody(req)) as { email?: string };
+            if (body.email != null) {
+              const email = String(body.email).trim();
+              if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: "invalid email" });
+              service.setJupiterEmail(email);
+            }
+            if (!service.getState().jupiterEmail) return json(res, 400, { error: "no Jupiter email set" });
             await service.sendCode();
             return json(res, 200, { sent: true });
           }
