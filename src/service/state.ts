@@ -16,6 +16,9 @@ export interface ServiceState {
   syncCount: number;
 }
 
+/** How a single transaction was mapped into ZenMoney. */
+export type SyncKind = "expense" | "income" | "transfer";
+
 /** Detailed snapshot of the last sync — what we read and what we pushed. */
 export interface SyncDetail {
   at: string;
@@ -27,6 +30,7 @@ export interface SyncDetail {
     transactions: Array<{
       id: string;
       date: string;
+      type: string;
       direction: string;
       amount: string;
       currency: string;
@@ -38,9 +42,36 @@ export interface SyncDetail {
         pushed: true;
         accounts: number;
         transactions: number;
+        /** Old income records retired because the deposit became a transfer. */
+        deletions: number;
         serverTimestamp: number | null;
-        /** A sample of the diff transactions actually sent. */
-        transactionsSample: Array<{ id: string; date: string; income: number; outcome: number; payee: string | null }>;
+        /** Per-kind counts + summed amounts (in the card account currency). */
+        counts: Record<SyncKind, number>;
+        totals: Record<SyncKind, number>;
+        /** A sample of the most recent mapped transactions, with classification. */
+        transactionsSample: Array<{
+          date: string;
+          kind: SyncKind;
+          amount: number;
+          currency: string;
+          account: string;
+          /** For transfers: the account the money came from. */
+          source: string | null;
+          payee: string | null;
+          mcc: number | null;
+          /** Original-currency amount when the purchase was a conversion, e.g. "-42.00 EUR". */
+          op: string | null;
+          hold: boolean;
+        }>;
+        /** How every deposit was handled — the "deposit → transfer" reasoning. */
+        deposits: Array<{
+          date: string;
+          amount: number;
+          currency: string;
+          result: "transfer" | "income";
+          detail: string;
+          sig: string | null;
+        }>;
       }
     | { pushed: false; reason: string };
 }

@@ -32,6 +32,12 @@ export function controlPanelHtml(): string {
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .neg { color: #dc2626; } .pos { color: #16a34a; }
   .scroll { max-height: 340px; overflow: auto; }
+  .k { font-size: .72rem; padding: .05rem .45rem; border-radius: 999px; text-transform: capitalize; white-space: nowrap; }
+  .k-expense { background: #dc262622; color: #dc2626; }
+  .k-income { background: #16a34a22; color: #16a34a; }
+  .k-transfer { background: #2563eb22; color: #2563eb; }
+  .summary { margin: .2rem 0 .5rem; font-size: .85rem; display: flex; gap: .9rem; flex-wrap: wrap; align-items: center; }
+  .subhead { font-size: .8rem; color: #8a8a8a; margin: .7rem 0 .2rem; }
   button:disabled { opacity: .45; cursor: not-allowed; }
   button.busy { cursor: progress; }
   .spin { display: inline-block; width: .75em; height: .75em; border: 2px solid #fff6; border-top-color: #fff; border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -1px; margin-right: .4em; }
@@ -231,37 +237,76 @@ export function controlPanelHtml(): string {
 
   function setPill(id, ok, okText, badText) { const e = $(id); e.textContent = ok ? okText : badText; e.className = "pill " + (ok ? "ok" : "bad"); }
   const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const money = (n) => (Math.round((Number(n) + Number.EPSILON) * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const kindBadge = (k) => '<span class="k k-' + esc(k) + '">' + esc(k) + "</span>";
   function rows(html) { return '<div class="scroll"><table>' + html + "</table></div>"; }
   async function refreshDetail() {
     const r = await fetch("/last-sync", { headers: headers() });
-    if (r.status === 401) { $("jup-data").textContent = "enter Admin token to view data"; $("zen-data").textContent = ""; return; }
+    if (r.status === 401) { $("jup-data").textContent = "enter Admin token to view data"; $("zen-data").textContent = ""; $("jup-meta").textContent = ""; $("zen-meta").textContent = ""; return; }
     const d = await r.json().catch(() => ({}));
     if (!d || d.empty) { $("jup-data").textContent = "no sync yet"; $("zen-data").textContent = "no sync yet"; return; }
-    // Jupiter
+
+    // ── Received from Jupiter ──
     const j = d.jupiter;
-    const bal = j.balance ? j.balance.spendableBalance + " " + j.balance.currency : "—";
+    const bal = j.balance ? money(j.balance.spendableBalance) + " " + j.balance.currency : "—";
     $("jup-meta").textContent = "@ " + new Date(d.at).toLocaleString();
     $("jup-data").innerHTML =
       '<div class="muted">cards: ' + j.cards.map((c) => "•" + esc(c.last4) + " (" + esc(c.status) + ")").join(", ") +
       " · balance: " + esc(bal) + " · " + j.transactionCount + " transactions</div>" +
-      rows("<tr><th>date</th><th>dir</th><th>amount</th><th>merchant</th></tr>" +
+      rows("<tr><th>date</th><th>type</th><th>dir</th><th>amount</th><th>merchant</th></tr>" +
         j.transactions.map((t) =>
-          "<tr><td>" + esc(t.date.slice(0, 10)) + "</td><td>" + esc(t.direction) +
+          "<tr><td>" + esc(t.date.slice(0, 10)) + "</td><td>" + esc((t.type || "").toLowerCase()) + "</td><td>" + esc(t.direction) +
           '</td><td class="num ' + (t.direction === "CREDIT" ? "pos" : "neg") + '">' + esc(t.amount) + " " + esc(t.currency) +
           "</td><td>" + esc(t.merchant || "") + "</td></tr>").join(""));
-    // ZenMoney
+
+    // ── Pushed to ZenMoney ──
     const z = d.zenmoney;
     if (!z.pushed) {
       $("zen-meta").textContent = "";
       $("zen-data").innerHTML = '<div class="muted">not pushed — ' + esc(z.reason) + "</div>";
-    } else {
-      $("zen-meta").textContent = z.accounts + " account(s), " + z.transactions + " tx";
-      $("zen-data").innerHTML =
-        rows("<tr><th>date</th><th>income</th><th>outcome</th><th>payee</th></tr>" +
-          z.transactionsSample.map((t) =>
-            "<tr><td>" + esc(t.date) + '</td><td class="num pos">' + (t.income || "") +
-            '</td><td class="num neg">' + (t.outcome || "") + "</td><td>" + esc(t.payee || "") + "</td></tr>").join(""));
+      return;
     }
+    $("zen-meta").textContent =
+      z.accounts + " account(s) · " + z.transactions + " tx" + (z.deletions ? " · " + z.deletions + " retired" : "");
+
+    // classification summary
+    const c = z.counts, tot = z.totals;
+    const summary =
+      '<div class="summary">' +
+      "<span>" + kindBadge("expense") + " " + c.expense + ' &nbsp;<span class="neg">−' + money(tot.expense) + "</span></span>" +
+      "<span>" + kindBadge("income") + " " + c.income + ' &nbsp;<span class="pos">+' + money(tot.income) + "</span></span>" +
+      "<span>" + kindBadge("transfer") + " " + c.transfer + ' &nbsp;<span class="pos">' + money(tot.transfer) + "</span></span>" +
+      "</div>";
+
+    // how each deposit was mapped
+    let depHtml = "";
+    if (z.deposits && z.deposits.length) {
+      depHtml =
+        '<div class="subhead">Deposits — how each was mapped</div>' +
+        rows("<tr><th>date</th><th>amount</th><th>result</th><th>detail</th></tr>" +
+          z.deposits.map((x) =>
+            "<tr><td>" + esc(x.date.slice(0, 10)) + '</td><td class="num pos">' + esc(money(x.amount)) + " " + esc(x.currency) +
+            "</td><td>" + kindBadge(x.result) + "</td><td>" + esc(x.detail) +
+            (x.sig ? ' <a href="https://solscan.io/tx/' + esc(x.sig) + '" target="_blank" rel="noopener" title="' + esc(x.sig) + '">sig↗</a>' : "") +
+            "</td></tr>").join(""));
+    }
+
+    // mapped transactions with classification
+    const txHtml =
+      '<div class="subhead">Mapped transactions (latest ' + z.transactionsSample.length + ")</div>" +
+      rows("<tr><th>date</th><th>kind</th><th>amount</th><th>payee / source</th><th>mcc</th></tr>" +
+        z.transactionsSample.map((t) => {
+          const sign = t.kind === "expense" ? "−" : "+";
+          const cls = t.kind === "expense" ? "neg" : "pos";
+          const who = t.kind === "transfer" ? "from " + esc(t.source || "?") : esc(t.payee || "");
+          const opStr = t.op ? ' <span class="muted">(' + esc(t.op) + ")</span>" : "";
+          const hold = t.hold ? ' <span class="muted">· hold</span>' : "";
+          return "<tr><td>" + esc(t.date.slice(0, 10)) + "</td><td>" + kindBadge(t.kind) +
+            '</td><td class="num ' + cls + '">' + sign + esc(money(t.amount)) + " " + esc(t.currency) + opStr +
+            "</td><td>" + who + hold + "</td><td>" + esc(t.mcc || "") + "</td></tr>";
+        }).join(""));
+
+    $("zen-data").innerHTML = summary + depHtml + txHtml;
   }
   // Enter submits the adjacent action.
   $("jup-email").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCode($("btn-sendcode")); });

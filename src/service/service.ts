@@ -6,7 +6,7 @@ import { SolanaResolver } from "../solana.js";
 import { SignatureCache, resolveDepositSources } from "../transfers.js";
 import type { ServiceConfig } from "./config.js";
 import { CredentialStore } from "./credentials.js";
-import { initialState, type ServiceState, type SyncDetail } from "./state.js";
+import { initialState, type ServiceState, type SyncDetail, type SyncKind } from "./state.js";
 
 type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) => void;
 
@@ -136,10 +136,11 @@ export class SyncService {
         transactionCount: txs.length,
         transactions: [...txs]
           .sort((a, b) => (a.transactionTimestamp < b.transactionTimestamp ? 1 : -1))
-          .slice(0, 20)
+          .slice(0, 25)
           .map((t) => ({
             id: t.id,
             date: t.transactionTimestamp,
+            type: t.type,
             direction: t.direction,
             amount: t.settlementAmount,
             currency: t.settlementCurrency,
@@ -161,18 +162,70 @@ export class SyncService {
         const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
         const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp, diff.deletions);
         pushed = true;
+
+        // Reconstruct how each Jupiter transaction was classified, in human terms.
+        const amt = (s: string | number | null | undefined) => (Number.isFinite(Number(s)) ? Number(s) : 0);
+        const acctTitle = new Map(accounts.map((a) => [a.id, a.title]));
+        const cardTitle = scrape.accounts[0]?.title ?? "Jupiter Card";
+        const cardCcy = balance.currency || "USD";
+        const mapped = txs.map((t) => {
+          const credit = t.direction === "CREDIT";
+          const src = t.type !== "CARD" && credit ? transferSources.get(t.id) : undefined;
+          const kind: SyncKind = src ? "transfer" : credit ? "income" : "expense";
+          return {
+            date: t.transactionTimestamp,
+            kind,
+            amount: Math.abs(amt(t.settlementAmount)),
+            currency: t.settlementCurrency || cardCcy,
+            account: cardTitle,
+            source: src ? (acctTitle.get(src.accountId) ?? "source account") : null,
+            payee: t.card?.merchantName ?? null,
+            mcc: t.card?.merchantCategoryCode ? Number(t.card.merchantCategoryCode) || null : null,
+            op:
+              t.transactionCurrency && t.transactionCurrency !== t.settlementCurrency
+                ? `${amt(t.transactionAmount).toFixed(2)} ${t.transactionCurrency}`
+                : null,
+            hold: t.card ? t.card.settlementTimestamp === null : false,
+          };
+        });
+
+        const counts: Record<SyncKind, number> = { expense: 0, income: 0, transfer: 0 };
+        const totals: Record<SyncKind, number> = { expense: 0, income: 0, transfer: 0 };
+        for (const m of mapped) {
+          counts[m.kind] += 1;
+          totals[m.kind] += m.amount;
+        }
+
+        const deposits = txs
+          .filter((t) => t.type !== "CARD" && t.direction === "CREDIT")
+          .sort((a, b) => (a.transactionTimestamp < b.transactionTimestamp ? 1 : -1))
+          .map((t) => {
+            const src = transferSources.get(t.id);
+            const sig = t.onchainSignature ?? null;
+            return {
+              date: t.transactionTimestamp,
+              amount: Math.abs(amt(t.settlementAmount)),
+              currency: t.settlementCurrency || cardCcy,
+              result: (src ? "transfer" : "income") as "transfer" | "income",
+              detail: src
+                ? `→ ${acctTitle.get(src.accountId) ?? "source account"}`
+                : sig
+                  ? "no matching account — kept as income"
+                  : "no on-chain signature — kept as income",
+              sig,
+            };
+          });
+
         zenmoneyDetail = {
           pushed: true,
           accounts: diff.accounts.length,
           transactions: diff.transactions.length,
+          deletions: diff.deletions.length,
           serverTimestamp: resp?.serverTimestamp ?? null,
-          transactionsSample: diff.transactions.slice(0, 20).map((t) => ({
-            id: t.id,
-            date: t.date,
-            income: t.income,
-            outcome: t.outcome,
-            payee: t.payee,
-          })),
+          counts,
+          totals,
+          transactionsSample: [...mapped].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 25),
+          deposits,
         };
       } else {
         zenmoneyDetail = { pushed: false, reason: this.config.dryRun ? "dry-run" : "no ZenMoney token" };
