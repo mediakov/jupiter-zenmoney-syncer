@@ -73,9 +73,20 @@ export interface DiffTransaction {
   opOutcomeInstrument: number | null;
 }
 
+/** An existing ZenMoney account a deposit was traced to (the transfer source). */
+export interface SourceAccount {
+  accountId: string;
+  instrument: number | null;
+}
+
 export interface DiffContext {
   instruments: InstrumentMap;
   userId: number;
+  /**
+   * Deposits (by Jupiter tx id) whose on-chain source was matched to an existing
+   * ZenMoney account → emitted as a transfer instead of plain income.
+   */
+  transferSources?: Map<string, SourceAccount>;
 }
 
 /**
@@ -155,6 +166,10 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
     }
   }
 
+  // A deposit (positive sum) whose on-chain source matched an existing ZenMoney
+  // account becomes a transfer: money in to the card, out from the source.
+  const source = sum > 0 ? ctx.transferSources?.get(tx.id ?? "") : undefined;
+
   return {
     id: stableUuid(`tx:${tx.id ?? m.id ?? `${+tx.date}:${sum}`}`),
     changed,
@@ -166,11 +181,11 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
     incomeAccount: accId,
     incomeInstrument: instrId,
     incomeBankID: null,
-    outcome: sum < 0 ? -sum : 0,
-    outcomeAccount: accId,
-    outcomeInstrument: instrId,
+    outcome: source ? sum : sum < 0 ? -sum : 0,
+    outcomeAccount: source ? source.accountId : accId,
+    outcomeInstrument: source ? (source.instrument ?? instrId) : instrId,
     outcomeBankID: null,
-    payee,
+    payee: source ? null : payee,
     originalPayee: payee,
     mcc: tx.merchant?.mcc ?? null,
     comment: tx.comment,

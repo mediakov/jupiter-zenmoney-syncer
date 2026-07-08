@@ -7,10 +7,19 @@ interface Instrument {
   shortTitle: string;
 }
 
+/** An existing ZenMoney account, as returned by diff (subset we use for matching). */
+export interface ZenExistingAccount {
+  id: string;
+  instrument: number | null;
+  title: string;
+  syncID: string[] | null;
+}
+
 interface DiffResponse {
   serverTimestamp: number;
   instrument?: Instrument[];
   user?: Array<{ id: number }>;
+  account?: ZenExistingAccount[];
   [k: string]: unknown;
 }
 
@@ -59,11 +68,16 @@ export class ZenMoneyClient {
    * Fetch the instrument table + the account owner's user id (both required to
    * build a valid diff). Returns `{ map, userId, serverTimestamp }`.
    */
-  async context(): Promise<{ map: InstrumentMap; userId: number; serverTimestamp: number }> {
+  async context(): Promise<{
+    map: InstrumentMap;
+    userId: number;
+    serverTimestamp: number;
+    accounts: ZenExistingAccount[];
+  }> {
     const res = await this.diff({
       currentClientTimestamp: this.now(),
       serverTimestamp: this.now() - 1,
-      forceFetch: ["instrument", "user"],
+      forceFetch: ["instrument", "user", "account"],
     });
     const byCode = new Map<string, number>();
     for (const i of res.instrument ?? []) byCode.set(i.shortTitle.toUpperCase(), i.id);
@@ -73,6 +87,7 @@ export class ZenMoneyClient {
       map: (code: string) => byCode.get(code.toUpperCase()),
       userId,
       serverTimestamp: res.serverTimestamp,
+      accounts: res.account ?? [],
     };
   }
 

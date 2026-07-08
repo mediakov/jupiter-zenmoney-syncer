@@ -64,6 +64,8 @@ is set (the web UI has an "Admin token" box for it).
 | `DRY_RUN` | — | `1` = read+convert, no push |
 | `PORT` | `8080` | control server |
 | `SERVICE_TOKEN` | — | protects POST routes |
+| `SOLANA_RPC` | public mainnet | RPC for deposit-source tracing (see below) |
+| `SIG_CACHE_FILE` | `/data/sig-cache.json` | caches resolved signatures |
 
 ### As a library
 ```ts
@@ -170,6 +172,33 @@ it in place rather than duplicating. Transaction ids are derived the same way
 `cardId` (which physical card) isn't used to pick a different account. If you had
 more than one distinct Jupiter account (`cardAccountId`), `accountIdFor()` would
 need to key each transaction by its own account.
+
+## Deposits as transfers
+
+A USDC deposit into the card can be recorded as a **transfer** from the wallet
+that funded it, instead of plain income — but only when the source can be
+identified and matched to one of your ZenMoney accounts:
+
+1. The Jupiter deposit carries an on-chain **signature** (`onchainSignature`).
+2. `SolanaResolver` looks the signature up on-chain and reads the **source wallet**
+   (the `authority` of the SPL token transfer).
+3. That address is matched to an existing **ZenMoney account** — by a `syncID`
+   equal to the full address, or (per spec) whose **last 4 characters** match.
+4. If matched → the deposit is emitted as a transfer (money **out** of that
+   account, **in** to the card). **Otherwise it stays income** — no guessing.
+
+### To enable it, tag your source accounts
+Add the funding wallet's address (or just its **last 4 chars**) to the `syncID`
+of the ZenMoney account that represents it (e.g. your "Stablecoins Solana"
+account). Until then, deposits resolve but match nothing and remain income.
+An ambiguous last-4 (two accounts) is treated as *no match* on purpose.
+
+### Use a full-history RPC
+The default public RPC (`api.mainnet-beta.solana.com`) is rate-limited and
+**prunes old transactions**, so deposits older than a few days often won't
+resolve. For reliable tracing set `SOLANA_RPC` to a full-history provider
+(Helius, QuickNode, Triton, …). Successful lookups are cached; unresolved ones
+are retried next run.
 
 ## ZenMoney diff format notes
 

@@ -18,6 +18,10 @@ export interface ServiceConfig {
   port: number;
   /** Optional bearer token protecting mutating endpoints (POST /sync, /auth/*). */
   serviceToken: string | null;
+  /** Solana RPC used to trace deposit sources for transfer detection. */
+  solanaRpc: string;
+  /** Cache file for resolved signature → source-address lookups. */
+  sigCacheFile: string;
 }
 
 /** Parse a duration like "6h", "30m", "90s", or a plain number of ms. */
@@ -61,5 +65,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     dryRun,
     port: Number(env.PORT ?? 8080),
     serviceToken: env.SERVICE_TOKEN ?? null,
+    solanaRpc: env.SOLANA_RPC || "https://api.mainnet-beta.solana.com",
+    sigCacheFile: env.SIG_CACHE_FILE ?? "/data/sig-cache.json",
   };
 }

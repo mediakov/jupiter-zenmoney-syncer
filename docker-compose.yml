@@ -11,6 +11,7 @@ services:
       SYNC_YEARS: ${SYNC_YEARS:-}
       DRY_RUN: ${DRY_RUN:-}
       SERVICE_TOKEN: ${SERVICE_TOKEN:-}
+      SOLANA_RPC: ${SOLANA_RPC:-}
     volumes:
       - jup-data:/data
     healthcheck:

@@ -2,6 +2,8 @@ import { JupiterCard } from "jupiter-card-sdk";
 import { toScrapeResult } from "./convert.js";
 import { scrapeToDiff } from "./toDiff.js";
 import { ZenMoneyClient } from "./zenClient.js";
+import { SolanaResolver } from "./solana.js";
+import { resolveDepositSources, SignatureCache } from "./transfers.js";
 
 export interface SyncOptions {
   jupiter: JupiterCard;
@@ -10,6 +12,10 @@ export interface SyncOptions {
   year?: number;
   /** If true, don't push — just return what would be sent. */
   dryRun?: boolean;
+  /** Solana resolver for deposit→transfer detection (default: public mainnet RPC). */
+  solana?: SolanaResolver;
+  /** Optional signature-resolution cache. */
+  sigCache?: SignatureCache;
 }
 
 export interface SyncSummary {
@@ -36,9 +42,15 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
   // 2. shared converter → ZenMoney plugin (movements) format
   const scrape = toScrapeResult(cards, balance, transactions);
 
-  // 3. resolve instruments + user id, then adapt movements → diff format
-  const { map, userId, serverTimestamp } = await zen.context();
-  const diff = scrapeToDiff(scrape, { instruments: map, userId });
+  // 3. resolve instruments + user id + existing accounts
+  const { map, userId, serverTimestamp, accounts } = await zen.context();
+
+  // trace deposit sources on-chain; matched ones become transfers, rest income
+  const solana = opts.solana ?? new SolanaResolver();
+  const transferSources = await resolveDepositSources(transactions, { solana, accounts, cache: opts.sigCache });
+
+  // adapt movements → diff format
+  const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
 
   // 4. push (unless dry run)
   if (!opts.dryRun) {

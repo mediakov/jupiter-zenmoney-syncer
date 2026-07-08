@@ -2,6 +2,8 @@ import { JupiterCard } from "jupiter-card-sdk";
 import { toScrapeResult } from "../convert.js";
 import { scrapeToDiff } from "../toDiff.js";
 import { ZenMoneyClient } from "../zenClient.js";
+import { SolanaResolver } from "../solana.js";
+import { SignatureCache, resolveDepositSources } from "../transfers.js";
 import type { ServiceConfig } from "./config.js";
 import { CredentialStore } from "./credentials.js";
 import { initialState, type ServiceState, type SyncDetail } from "./state.js";
@@ -16,6 +18,8 @@ type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) =
 export class SyncService {
   private readonly jupiter: JupiterCard;
   private readonly creds: CredentialStore;
+  private readonly solana: SolanaResolver;
+  private readonly sigCache: SignatureCache;
   private zen: ZenMoneyClient | null;
   private readonly state: ServiceState = initialState();
   private lastDetail: SyncDetail | null = null;
@@ -30,6 +34,8 @@ export class SyncService {
       auth: { kind: "email", email: config.jupiterEmail, sessionFile: config.sessionFile },
     });
     this.creds = new CredentialStore(config.credFile);
+    this.solana = new SolanaResolver({ rpc: config.solanaRpc });
+    this.sigCache = new SignatureCache(config.sigCacheFile);
     // ZenMoney token: env takes precedence, else a previously UI-provided one.
     const token = config.zenToken ?? this.creds.zenToken ?? null;
     this.zen = token ? new ZenMoneyClient({ token }) : null;
@@ -124,8 +130,15 @@ export class SyncService {
       let pushed = false;
       let zenmoneyDetail: SyncDetail["zenmoney"];
       if (this.zen && !this.config.dryRun) {
-        const { map, userId, serverTimestamp } = await this.zen.context();
-        const diff = scrapeToDiff(scrape, { instruments: map, userId });
+        const { map, userId, serverTimestamp, accounts } = await this.zen.context();
+        // trace deposit sources → map matching ones to transfers (else income)
+        const transferSources = await resolveDepositSources(txs, {
+          solana: this.solana,
+          accounts,
+          cache: this.sigCache,
+          log: (m) => this.log("info", m),
+        });
+        const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
         const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp);
         pushed = true;
         zenmoneyDetail = {
