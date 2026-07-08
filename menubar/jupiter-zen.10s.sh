@@ -51,7 +51,7 @@ fmt_time() {
 STATUS=$("$CURL" -fsS --max-time 4 "${auth_args[@]}" "$BASE/status" 2>/dev/null)
 
 if [ -z "$STATUS" ]; then
-  echo "Zen | sfimage=wifi.slash sfcolor=#8e8e93"
+  echo "⚪️ Zen"
   echo "---"
   echo "Service unreachable | color=red"
   echo "$BASE | href=$BASE"
@@ -76,21 +76,19 @@ err=$(jget "$STATUS" lastError)
 [ "$email" = "null" ] && email=""
 [ "$err" = "null" ] && err=""
 
-# --- menu bar title (SF Symbol tinted by state; adapts to light/dark) --------
+# --- menu bar title (colored glyph reflects state) --------------------------
+# NOTE: SwiftBar renders menu-bar SF Symbols as monochrome template images and
+# ignores sfcolor there, so we use emoji — the only way to get color in the bar.
 
 case "$st" in
-  syncing)    sym="arrow.triangle.2.circlepath"; col="#0a84ff" ;;
-  needs-auth) sym="exclamationmark.triangle.fill"; col="#ff9f0a" ;;
-  error)      sym="exclamationmark.triangle.fill"; col="#ff3b30" ;;
+  syncing)    icon="🔄" ;;
+  needs-auth) icon="🟠" ;;
+  error)      icon="🔴" ;;
   idle)
-    if [ "$authed" = "true" ] && [ "$zen" = "true" ]; then
-      sym="checkmark.circle.fill"; col="#30d158"
-    else
-      sym="exclamationmark.circle.fill"; col="#ff9f0a"
-    fi ;;
-  *)          sym="questionmark.circle"; col="#8e8e93" ;;
+    if [ "$authed" = "true" ] && [ "$zen" = "true" ]; then icon="🟢"; else icon="🟡"; fi ;;
+  *)          icon="⚪️" ;;
 esac
-echo "Zen | sfimage=$sym sfcolor=$col"
+echo "$icon Zen"
 echo "---"
 
 # --- status detail ---------------------------------------------------------

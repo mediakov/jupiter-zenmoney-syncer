@@ -5,7 +5,7 @@ talks to the running service's API (`/status`, `/sync`), so it needs no Node and
 doesn't care whether the service runs in OrbStack/Docker or via `npm run serve`.
 
 ```
-✓ Zen                      ← "Zen" + an SF Symbol icon tinted by state
+🟢 Zen                     ← "Zen" + a colored status glyph
 ─────────────────────────
 Status: idle ✓
 Jupiter: you@example.com  ● connected
@@ -19,12 +19,11 @@ Open control panel
 Refresh
 ```
 
-Menu-bar icon (SF Symbols, adapt to light/dark):
-`checkmark.circle.fill` green = idle & both connected ·
-`exclamationmark.circle.fill` amber = idle but one side unconnected ·
-`arrow.triangle.2.circlepath` blue = syncing ·
-`exclamationmark.triangle.fill` red = needs-auth/error ·
-`wifi.slash` gray = service unreachable.
+Menu-bar glyph: 🟢 idle & both connected · 🟡 idle but one side unconnected ·
+🔄 syncing · 🟠 needs-auth · 🔴 error · ⚪️ service unreachable.
+
+(SwiftBar renders menu-bar SF Symbols as monochrome templates and ignores color
+there, so emoji is used for an at-a-glance colored status.)
 
 ## Install
 
