@@ -95,15 +95,6 @@ export interface DiffContext {
    * ZenMoney account → emitted as a transfer instead of plain income.
    */
   transferSources?: Map<string, SourceAccount>;
-  /**
-   * One-off override: stamp transfer transactions with `changed = now` so a
-   * later app edit doesn't stop the conversion. Deposits that resolve to a
-   * transfer already get a **fresh id** (`transfer:` namespace) so they insert
-   * cleanly; ZenMoney permanently tombstones a *deleted* transaction id, so we
-   * never try to resurrect the old `tx:` record — we insert a new one and emit a
-   * deletion for the old income id. This flag only bumps `changed`.
-   */
-  reconcile?: boolean;
 }
 
 /**
@@ -171,10 +162,8 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
   // A deposit whose on-chain source matched an existing ZenMoney account.
   const source = sum > 0 ? ctx.transferSources?.get(tx.id ?? "") : undefined;
 
-  // Normally `changed` is the transaction's own time (stable → app edits always
-  // win). In reconcile mode, transfers use "now" so they override an existing
-  // income record or a deletion tombstone — a deliberate, scoped one-off.
-  const changed = source && ctx.reconcile ? Math.floor(Date.now() / 1000) : Math.floor(tx.date.getTime() / 1000);
+  // `changed` is the transaction's own time (stable → app edits always win).
+  const changed = Math.floor(tx.date.getTime() / 1000);
   const instrId = requireInstrument(accountInstrument, ctx.instruments);
   const accId = "id" in m.account ? stableUuid(`account:${m.account.id}`) : stableUuid(`ref:${m.account.syncIds.join(",")}`);
   const payee = tx.merchant?.fullTitle ?? tx.merchant?.title ?? null;

@@ -40,7 +40,7 @@ describe("control server", () => {
   const calls: string[] = [];
   const fakeService = {
     getState: () => ({ ...initialState(), status: "idle" }),
-    runSync: async (reconcile?: boolean) => void calls.push(reconcile ? "reconcile" : "runSync"),
+    runSync: async () => void calls.push("runSync"),
     sendCode: async () => void calls.push("sendCode"),
     verifyCode: async (code: string) => void calls.push("verify:" + code),
     setZenToken: (token: string) => void calls.push("zen:" + token),
@@ -72,12 +72,6 @@ describe("control server", () => {
     const ok = await fetch(base + "/sync", { method: "POST", headers: { authorization: "Bearer secret" } });
     expect(ok.status).toBe(202);
     expect(calls).toContain("runSync");
-  });
-
-  it("POST /reconcile runs a reconciling sync", async () => {
-    const r = await fetch(base + "/reconcile", { method: "POST", headers: { authorization: "Bearer secret" } });
-    expect(r.status).toBe(202);
-    expect(calls).toContain("reconcile");
   });
 
   it("POST /auth/verify needs a code", async () => {

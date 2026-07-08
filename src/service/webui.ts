@@ -77,7 +77,6 @@ export function controlPanelHtml(): string {
     <span id="sync-ind" class="pill info"><span class="spin"></span>syncing…</span>
     <button id="btn-refresh" class="secondary" onclick="refresh(this)">Refresh</button>
     <button id="btn-sync" class="secondary" onclick="syncNow(this)">Sync now</button>
-    <button id="btn-reconcile" class="secondary" onclick="reconcile(this)">Reconcile transfers</button>
   </div>
   <div id="status-sum" class="muted">loading…</div>
   <pre id="status">loading…</pre>
@@ -166,16 +165,6 @@ export function controlPanelHtml(): string {
       await waitForSync();
     });
   }
-  async function reconcile(btn) {
-    if (!confirm("Re-stamp deposit→transfer conversions with the current time so they override a manual app edit? (one-off — a normal sync already converts them.)")) return;
-    await withBusy(btn, "Reconciling…", async () => {
-      const { ok, j } = await post("/reconcile");
-      if (!ok) return toast("Reconcile failed: " + (j.error || "error"), "bad");
-      toast("Reconcile started…", "info");
-      await waitForSync();
-    });
-  }
-
   // Poll until the service leaves the "syncing" state (or times out), so the
   // triggering button stays busy for the real duration of the sync.
   async function waitForSync(maxMs) {
@@ -223,7 +212,7 @@ export function controlPanelHtml(): string {
     const syncing = s.status === "syncing";
     const ready = !!(s.authenticated && s.zenConnected);
     $("sync-ind").className = "pill info" + (syncing ? " on" : "");
-    for (const id of ["btn-sync", "btn-reconcile"]) {
+    for (const id of ["btn-sync"]) {
       const b = $(id);
       if (!b || b.dataset.busy) continue;
       b.disabled = !ready || syncing;

@@ -93,12 +93,8 @@ export class SyncService {
     void this.runSync();
   }
 
-  /**
-   * Run one sync across all configured years. Safe to call concurrently (guarded).
-   * @param reconcile one-off: force deposit→transfer conversions to override
-   *   existing income records / deletion tombstones (see toDiff `reconcile`).
-   */
-  async runSync(reconcile = false): Promise<void> {
+  /** Run one sync across all configured years. Safe to call concurrently (guarded). */
+  async runSync(): Promise<void> {
     if (this.running) return;
     if (!this.jupiter.isAuthenticated()) {
       this.state.status = "needs-auth";
@@ -142,7 +138,7 @@ export class SyncService {
           cache: this.sigCache,
           log: (m) => this.log("info", m),
         });
-        const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources, reconcile });
+        const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
         const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp, diff.deletions);
         pushed = true;
         zenmoneyDetail = {
