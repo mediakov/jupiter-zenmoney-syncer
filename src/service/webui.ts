@@ -108,6 +108,7 @@ export function controlPanelHtml(): string {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const headers = () => { const t = $("admin").value.trim(); const h = { "content-type": "application/json" }; if (t) h.authorization = "Bearer " + t; return h; };
   let lastStatus = null;
+  let lastRenderedAt = null; // skip re-rendering the detail tables when unchanged
 
   function toast(msg, kind) {
     const t = $("toast");
@@ -118,13 +119,18 @@ export function controlPanelHtml(): string {
   }
 
   async function post(path, body) {
-    const r = await fetch(path, { method: "POST", headers: headers(), body: body ? JSON.stringify(body) : undefined });
-    const j = await r.json().catch(() => ({}));
-    return { ok: r.ok, status: r.status, j };
+    try {
+      const r = await fetch(path, { method: "POST", headers: headers(), body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000) });
+      const j = await r.json().catch(() => ({}));
+      return { ok: r.ok, status: r.status, j };
+    } catch (e) {
+      return { ok: false, status: 0, j: { error: "network timeout" } };
+    }
   }
 
   // Run an async action with a per-button busy state (spinner + disabled),
   // guarding against double-clicks. Always restores the button afterwards.
+  // A minimum on-screen time keeps the spinner from flashing on fast ops.
   async function withBusy(btn, busyLabel, fn) {
     if (!btn || btn.dataset.busy) return;
     const orig = btn.innerHTML;
@@ -132,8 +138,11 @@ export function controlPanelHtml(): string {
     btn.disabled = true;
     btn.classList.add("busy");
     btn.innerHTML = '<span class="spin"></span>' + busyLabel;
+    const started = Date.now();
     try { return await fn(); }
     finally {
+      const rest = 350 - (Date.now() - started);
+      if (rest > 0) await sleep(rest);
       delete btn.dataset.busy;
       btn.classList.remove("busy");
       btn.innerHTML = orig;
@@ -196,7 +205,7 @@ export function controlPanelHtml(): string {
   async function refresh(btn) {
     if (btn) return withBusy(btn, "Refreshing…", () => refresh());
     let s;
-    try { s = await fetch("/status").then((r) => r.json()); }
+    try { s = await fetch("/status", { signal: AbortSignal.timeout(6000) }).then((r) => r.json()); }
     catch { return null; }
     lastStatus = s;
     $("status").textContent = JSON.stringify(s, null, 2);
@@ -241,10 +250,15 @@ export function controlPanelHtml(): string {
   const kindBadge = (k) => '<span class="k k-' + esc(k) + '">' + esc(k) + "</span>";
   function rows(html) { return '<div class="scroll"><table>' + html + "</table></div>"; }
   async function refreshDetail() {
-    const r = await fetch("/last-sync", { headers: headers() });
-    if (r.status === 401) { $("jup-data").textContent = "enter Admin token to view data"; $("zen-data").textContent = ""; $("jup-meta").textContent = ""; $("zen-meta").textContent = ""; return; }
+    let r;
+    try { r = await fetch("/last-sync", { headers: headers(), signal: AbortSignal.timeout(6000) }); }
+    catch (e) { return; } // transient — keep the last render rather than blanking
+    if (r.status === 401) { lastRenderedAt = null; $("jup-data").textContent = "enter Admin token to view data"; $("zen-data").textContent = ""; $("jup-meta").textContent = ""; $("zen-meta").textContent = ""; return; }
     const d = await r.json().catch(() => ({}));
-    if (!d || d.empty) { $("jup-data").textContent = "no sync yet"; $("zen-data").textContent = "no sync yet"; return; }
+    if (!d || d.empty) { lastRenderedAt = null; $("jup-data").textContent = "no sync yet"; $("zen-data").textContent = "no sync yet"; return; }
+    // nothing new since last render → leave the tables (and their scroll) untouched
+    if (d.at && d.at === lastRenderedAt) return;
+    lastRenderedAt = d.at;
 
     // ── Received from Jupiter ──
     const j = d.jupiter;
