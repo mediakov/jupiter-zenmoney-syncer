@@ -61,7 +61,7 @@ export class SolanaResolver {
       ...(tx.meta?.innerInstructions?.flatMap((i: any) => i.instructions) ?? []),
     ];
 
-    // SPL token transfers — pick the one closest to expectedAmount, else first
+    // 1. SPL token transfer authority (the signing wallet) — precise when present
     const transfers = instrs.filter(
       (i) => i.program === "spl-token" && i.parsed && /transfer/i.test(i.parsed.type ?? ""),
     );
@@ -79,7 +79,27 @@ export class SolanaResolver {
       if (typeof auth === "string") return auth;
     }
 
-    // native SOL transfer fallback
+    // 2. Token-balance delta — the owner whose token balance dropped is the
+    //    sender. Robust when the authority is a PDA/program (authority: null).
+    const byIndex = new Map<number, { owner?: string; pre: number; post: number }>();
+    const ui = (b: any) => Number(b?.uiTokenAmount?.uiAmountString ?? b?.uiTokenAmount?.uiAmount ?? 0);
+    for (const b of tx.meta?.preTokenBalances ?? []) {
+      const e = byIndex.get(b.accountIndex) ?? { pre: 0, post: 0 };
+      e.pre = ui(b); e.owner = b.owner; byIndex.set(b.accountIndex, e);
+    }
+    for (const b of tx.meta?.postTokenBalances ?? []) {
+      const e = byIndex.get(b.accountIndex) ?? { pre: 0, post: 0 };
+      e.post = ui(b); e.owner = b.owner ?? e.owner; byIndex.set(b.accountIndex, e);
+    }
+    let source: string | null = null;
+    let biggestDrop = 0;
+    for (const e of byIndex.values()) {
+      const delta = e.post - e.pre; // negative = funds left this owner
+      if (delta < biggestDrop && e.owner) { biggestDrop = delta; source = e.owner; }
+    }
+    if (source) return source;
+
+    // 3. native SOL transfer fallback
     const sol = instrs.find((i) => i.program === "system" && i.parsed?.type === "transfer");
     const src = (sol?.parsed?.info as any)?.source;
     return typeof src === "string" ? src : null;
