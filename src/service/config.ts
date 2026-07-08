@@ -6,6 +6,8 @@ export interface ServiceConfig {
   zenToken: string | null;
   /** Path to persist the Jupiter session (mount a volume in Docker). */
   sessionFile: string;
+  /** Path to persist UI-provided credentials (ZenMoney token). */
+  credFile: string;
   /** How often to sync, in ms. */
   intervalMs: number;
   /** Which years to sync each run (e.g. current + previous to catch late posts). */
@@ -38,10 +40,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   if (!jupiterEmail) throw new Error("JUP_EMAIL is required");
 
   const dryRun = env.DRY_RUN === "1" || env.DRY_RUN === "true";
+  // ZEN_TOKEN is optional: it can be provided later via the web UI / API.
+  // Until a token is available (env or UI), syncs read+convert but don't push.
   const zenToken = env.ZEN_TOKEN ?? null;
-  if (!zenToken && !dryRun) {
-    throw new Error("ZEN_TOKEN is required (or set DRY_RUN=1 to run without pushing)");
-  }
 
   const now = new Date().getUTCFullYear();
   const years = env.SYNC_YEARS
@@ -52,6 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     jupiterEmail,
     zenToken,
     sessionFile: env.SESSION_FILE ?? "/data/.jup-session.json",
+    credFile: env.CRED_FILE ?? "/data/credentials.json",
     intervalMs: parseDuration(env.SYNC_INTERVAL, 6 * 3_600_000),
     years: years.length ? years : [now],
     dryRun,

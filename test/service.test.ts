@@ -21,9 +21,10 @@ describe("loadConfig", () => {
   it("requires JUP_EMAIL", () => {
     expect(() => loadConfig({})).toThrow(/JUP_EMAIL/);
   });
-  it("requires ZEN_TOKEN unless dry run", () => {
-    expect(() => loadConfig({ JUP_EMAIL: "a@b.c" } as any)).toThrow(/ZEN_TOKEN/);
-    expect(loadConfig({ JUP_EMAIL: "a@b.c", DRY_RUN: "1" } as any).dryRun).toBe(true);
+  it("ZEN_TOKEN is optional (can be provided later via UI)", () => {
+    const c = loadConfig({ JUP_EMAIL: "a@b.c" } as any);
+    expect(c.zenToken).toBeNull();
+    expect(loadConfig({ JUP_EMAIL: "a@b.c", ZEN_TOKEN: "t" } as any).zenToken).toBe("t");
   });
   it("parses years and interval", () => {
     const c = loadConfig({ JUP_EMAIL: "a@b.c", ZEN_TOKEN: "t", SYNC_YEARS: "2025, 2026", SYNC_INTERVAL: "12h" } as any);
@@ -42,6 +43,7 @@ describe("control server", () => {
     runSync: async () => void calls.push("runSync"),
     sendCode: async () => void calls.push("sendCode"),
     verifyCode: async (code: string) => void calls.push("verify:" + code),
+    setZenToken: (token: string) => void calls.push("zen:" + token),
   } as unknown as SyncService;
   const config = { serviceToken: "secret" } as ServiceConfig;
 
@@ -81,6 +83,26 @@ describe("control server", () => {
     });
     expect(ok.status).toBe(200);
     expect(calls).toContain("verify:123456");
+  });
+
+  it("GET / serves the HTML control panel", async () => {
+    const r = await fetch(base + "/");
+    expect(r.headers.get("content-type")).toContain("text/html");
+    const html = await r.text();
+    expect(html).toContain("Jupiter");
+    expect(html).toContain("ZenMoney");
+  });
+
+  it("POST /auth/zenmoney stores the token", async () => {
+    const bad = await fetch(base + "/auth/zenmoney", { method: "POST", headers: { authorization: "Bearer secret" }, body: "{}" });
+    expect(bad.status).toBe(400);
+    const ok = await fetch(base + "/auth/zenmoney", {
+      method: "POST",
+      headers: { authorization: "Bearer secret", "content-type": "application/json" },
+      body: JSON.stringify({ token: "zen_abc" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(calls).toContain("zen:zen_abc");
   });
 
   it("unknown route → 404", async () => {

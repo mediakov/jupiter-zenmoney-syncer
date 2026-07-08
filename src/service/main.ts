@@ -29,7 +29,9 @@ const service = new SyncService(config, (l, m, e) => log(l, m, e));
 service.start();
 
 const server = createControlServer(service, config);
-server.listen(config.port, () => log("info", `control server listening on :${config.port}`));
+server.listen(config.port, () =>
+  log("info", `control panel: open http://localhost:${config.port} to connect Jupiter + ZenMoney`),
+);
 
 const shutdown = (sig: string) => {
   log("info", `received ${sig}, shutting down`);

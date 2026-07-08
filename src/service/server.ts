@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { ServiceConfig } from "./config.js";
 import type { SyncService } from "./service.js";
+import { controlPanelHtml } from "./webui.js";
 
 /**
  * Minimal HTTP control/status surface (no framework):
@@ -43,6 +44,10 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
       const path = (req.url ?? "/").split("?")[0];
 
       try {
+        if (method === "GET" && (path === "/" || path === "/index.html")) {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          return res.end(controlPanelHtml());
+        }
         if (method === "GET" && path === "/health") return json(res, 200, { ok: true });
         if (method === "GET" && path === "/status") return json(res, 200, service.getState());
 
@@ -63,6 +68,12 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
             if (!body.code) return json(res, 400, { error: "missing code" });
             await service.verifyCode(String(body.code));
             return json(res, 200, { authenticated: true });
+          }
+          if (path === "/auth/zenmoney") {
+            const body = (await readBody(req)) as { token?: string };
+            if (!body.token) return json(res, 400, { error: "missing token" });
+            service.setZenToken(String(body.token));
+            return json(res, 200, { zenConnected: true });
           }
         }
 

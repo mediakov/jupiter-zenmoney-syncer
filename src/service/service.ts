@@ -3,6 +3,7 @@ import { toScrapeResult } from "../convert.js";
 import { scrapeToDiff } from "../toDiff.js";
 import { ZenMoneyClient } from "../zenClient.js";
 import type { ServiceConfig } from "./config.js";
+import { CredentialStore } from "./credentials.js";
 import { initialState, type ServiceState } from "./state.js";
 
 type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) => void;
@@ -14,7 +15,8 @@ type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) =
  */
 export class SyncService {
   private readonly jupiter: JupiterCard;
-  private readonly zen: ZenMoneyClient | null;
+  private readonly creds: CredentialStore;
+  private zen: ZenMoneyClient | null;
   private readonly state: ServiceState = initialState();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -26,9 +28,21 @@ export class SyncService {
     this.jupiter = new JupiterCard({
       auth: { kind: "email", email: config.jupiterEmail, sessionFile: config.sessionFile },
     });
-    this.zen = config.zenToken ? new ZenMoneyClient({ token: config.zenToken }) : null;
+    this.creds = new CredentialStore(config.credFile);
+    // ZenMoney token: env takes precedence, else a previously UI-provided one.
+    const token = config.zenToken ?? this.creds.zenToken ?? null;
+    this.zen = token ? new ZenMoneyClient({ token }) : null;
     this.state.authenticated = this.jupiter.isAuthenticated();
+    this.state.zenConnected = this.zen != null;
     this.state.status = this.state.authenticated ? "idle" : "needs-auth";
+  }
+
+  /** Store a ZenMoney API token (from the web UI/API) and start using it. */
+  setZenToken(token: string): void {
+    this.creds.setZenToken(token);
+    this.zen = new ZenMoneyClient({ token });
+    this.state.zenConnected = true;
+    this.log("info", "ZenMoney token set");
   }
 
   getState(): Readonly<ServiceState> {

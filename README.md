@@ -10,37 +10,47 @@ Jupiter Card ──(jupiter-card-sdk)──▶ shared converter ──(movements
 
 ## Long-running service
 
-An always-on daemon that syncs on a schedule and exposes a small HTTP surface.
+An always-on daemon that syncs on a schedule and exposes a small web UI + HTTP API.
+`ZEN_TOKEN` is optional at startup — you can connect ZenMoney from the UI instead.
 
 ```bash
 # Docker (recommended)
-JUP_EMAIL=you@example.com ZEN_TOKEN=xxx docker compose up -d
+JUP_EMAIL=you@example.com docker compose up -d
 
 # or directly
-JUP_EMAIL=you@example.com ZEN_TOKEN=xxx npm run serve
+JUP_EMAIL=you@example.com npm run serve
 ```
 
-**One-time auth bootstrap** (first run only — the session then auto-refreshes and
-it runs unattended within the ~7-day refresh window as long as it syncs at least
-once per window):
+**Bootstrap in the browser (easiest):** open **http://localhost:8080** and use the
+control panel:
+1. **Jupiter** → click *Send login code* → paste the 6-digit code from your email → *Verify*.
+2. **ZenMoney** → paste your API token → *Save token*.
 
+Both are persisted (on the `/data` volume). After the first Jupiter code the
+session auto-refreshes, so it runs unattended within the ~7-day refresh window as
+long as it syncs at least once per window.
+
+**Or bootstrap via the API** (same thing, headless):
 ```bash
 curl -XPOST localhost:8080/auth/send-code
-curl -XPOST localhost:8080/auth/verify -H 'content-type: application/json' -d '{"code":"123456"}'
+curl -XPOST localhost:8080/auth/verify   -H 'content-type: application/json' -d '{"code":"123456"}'
+curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d '{"token":"ZEN_API_TOKEN"}'
 ```
 
 **Endpoints**
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/` | web control panel (connect Jupiter + ZenMoney) |
 | GET | `/health` | liveness |
-| GET | `/status` | last sync result, timestamps, auth state |
+| GET | `/status` | last sync result, timestamps, per-connection auth state |
 | POST | `/sync` | trigger an immediate sync |
 | POST | `/auth/send-code` | send the Jupiter login OTP |
-| POST | `/auth/verify` | `{ "code": "…" }` complete login |
+| POST | `/auth/verify` | `{ "code": "…" }` complete Jupiter login |
+| POST | `/auth/zenmoney` | `{ "token": "…" }` set the ZenMoney API token |
 
 `POST` routes require `Authorization: Bearer $SERVICE_TOKEN` when `SERVICE_TOKEN`
-is set.
+is set (the web UI has an "Admin token" box for it).
 
 **Environment**
 
