@@ -5,7 +5,7 @@ talks to the running service's API (`/status`, `/sync`), so it needs no Node and
 doesn't care whether the service runs in OrbStack/Docker or via `npm run serve`.
 
 ```
-🟢 Jup⇄Zen                 ← menu-bar icon reflects state
+✓ Zen                      ← "Zen" + an SF Symbol icon tinted by state
 ─────────────────────────
 Status: idle ✓
 Jupiter: you@example.com  ● connected
@@ -19,8 +19,12 @@ Open control panel
 Refresh
 ```
 
-Icon states: 🟢 idle & both connected · 🟡 idle but one side unconnected ·
-🔄 syncing · 🔴 needs-auth/error · ⚪️ service unreachable.
+Menu-bar icon (SF Symbols, adapt to light/dark):
+`checkmark.circle.fill` green = idle & both connected ·
+`exclamationmark.circle.fill` amber = idle but one side unconnected ·
+`arrow.triangle.2.circlepath` blue = syncing ·
+`exclamationmark.triangle.fill` red = needs-auth/error ·
+`wifi.slash` gray = service unreachable.
 
 ## Install
 
