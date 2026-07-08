@@ -280,8 +280,11 @@ export function controlPanelHtml(): string {
       $("zen-data").innerHTML = '<div class="muted">not pushed — ' + esc(z.reason) + "</div>";
       return;
     }
-    $("zen-meta").textContent =
-      z.accounts + " account(s) · " + z.transactions + " tx" + (z.deletions ? " · " + z.deletions + " retired" : "");
+    const p = z.pushedThisRun || { transactions: 0, deletions: 0 };
+    const sent = p.transactions + p.deletions === 0
+      ? "up to date — nothing new sent"
+      : "sent this run: " + p.transactions + " tx" + (p.deletions ? " · " + p.deletions + " deletions" : "");
+    $("zen-meta").textContent = z.accounts + " acct · " + z.transactions + " tx in window · " + sent;
 
     // classification summary
     const c = z.counts, tot = z.totals;

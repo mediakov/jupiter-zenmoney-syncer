@@ -4,6 +4,7 @@ import { scrapeToDiff } from "../toDiff.js";
 import { ZenMoneyClient } from "../zenClient.js";
 import { SolanaResolver } from "../solana.js";
 import { SignatureCache, resolveDepositSources } from "../transfers.js";
+import { PushLedger } from "../pushLedger.js";
 import type { ServiceConfig } from "./config.js";
 import { CredentialStore } from "./credentials.js";
 import { initialState, type ServiceState, type SyncDetail, type SyncKind } from "./state.js";
@@ -21,6 +22,7 @@ export class SyncService {
   private readonly creds: CredentialStore;
   private readonly solana: SolanaResolver;
   private readonly sigCache: SignatureCache;
+  private readonly ledger: PushLedger;
   private zen: ZenMoneyClient | null;
   private readonly state: ServiceState = initialState();
   private lastDetail: SyncDetail | null = null;
@@ -37,6 +39,7 @@ export class SyncService {
     this.jupiter = this.jupiterEmail ? this.buildJupiter(this.jupiterEmail) : null;
     this.solana = new SolanaResolver({ rpc: config.solanaRpc });
     this.sigCache = new SignatureCache(config.sigCacheFile);
+    this.ledger = new PushLedger(config.pushLedgerFile);
     // ZenMoney token: env takes precedence, else a previously UI-provided one.
     const token = config.zenToken ?? this.creds.zenToken ?? null;
     this.zen = token ? new ZenMoneyClient({ token }) : null;
@@ -160,7 +163,15 @@ export class SyncService {
           log: (m) => this.log("info", m),
         });
         const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
-        const resp = await this.zen.push(diff.accounts, diff.transactions, serverTimestamp, diff.deletions);
+        // Only send what's new or changed since our last successful push — don't
+        // re-transmit the whole window every sync.
+        const toPush = this.ledger.pending(diff.accounts, diff.transactions, diff.deletions);
+        const hasNew = toPush.accounts.length > 0 || toPush.transactions.length > 0 || toPush.deletions.length > 0;
+        let resp: Awaited<ReturnType<ZenMoneyClient["push"]>> | null = null;
+        if (hasNew) {
+          resp = await this.zen.push(toPush.accounts, toPush.transactions, serverTimestamp, toPush.deletions);
+          this.ledger.record(toPush);
+        }
         pushed = true;
 
         // Reconstruct how each Jupiter transaction was classified, in human terms.
@@ -221,7 +232,12 @@ export class SyncService {
           accounts: diff.accounts.length,
           transactions: diff.transactions.length,
           deletions: diff.deletions.length,
-          serverTimestamp: resp?.serverTimestamp ?? null,
+          pushedThisRun: {
+            accounts: toPush.accounts.length,
+            transactions: toPush.transactions.length,
+            deletions: toPush.deletions.length,
+          },
+          serverTimestamp: resp?.serverTimestamp ?? serverTimestamp,
           counts,
           totals,
           transactionsSample: [...mapped].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 25),
@@ -236,7 +252,8 @@ export class SyncService {
       this.state.lastSyncOk = true;
       this.state.lastError = null;
       this.state.syncCount += 1;
-      this.log("info", `sync ok: ${scrape.transactions.length} tx, pushed=${pushed}`);
+      const sent = zenmoneyDetail.pushed ? zenmoneyDetail.pushedThisRun : null;
+      this.log("info", `sync ok: ${scrape.transactions.length} tx in window, sent ${sent ? sent.transactions : 0} new/changed`);
     } catch (e) {
       this.state.lastSyncOk = false;
       this.state.lastError = e instanceof Error ? e.message : String(e);

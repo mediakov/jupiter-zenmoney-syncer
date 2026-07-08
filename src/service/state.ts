@@ -44,6 +44,8 @@ export interface SyncDetail {
         transactions: number;
         /** Old income records retired because the deposit became a transfer. */
         deletions: number;
+        /** What was actually sent to ZenMoney this run (the delta; 0 when nothing changed). */
+        pushedThisRun: { accounts: number; transactions: number; deletions: number };
         serverTimestamp: number | null;
         /** Per-kind counts + summed amounts (in the card account currency). */
         counts: Record<SyncKind, number>;

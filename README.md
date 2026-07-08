@@ -81,6 +81,7 @@ is set (the web UI has an "Admin token" box for it).
 | `SERVICE_TOKEN` | — | protects POST routes |
 | `SOLANA_RPC` | public mainnet | RPC for deposit-source tracing (see below) |
 | `SIG_CACHE_FILE` | `/data/sig-cache.json` | caches resolved signatures |
+| `PUSH_LEDGER_FILE` | `/data/push-ledger.json` | tracks pushed records so re-syncs send only new/changed ones |
 
 ### As a library
 ```ts
@@ -150,6 +151,13 @@ await sync({ jupiter, zen, year: 2026 });
 Card-only, income/expense: one `ccard` USD account; card purchases → expense
 with merchant + MCC (+ original-currency `op*` on conversions); USDC
 deposits/withdrawals → income/expense with the on-chain signature in the comment.
+**Incremental push.** The service keeps a local *push ledger* (`id → changed` of
+what it has already sent, on the `/data` volume). Each sync rebuilds the full
+window but sends only records that are new or actually changed since the last
+push — steady-state syncs send **nothing** rather than re-transmitting the whole
+window to ZenMoney. Lose the ledger and the next sync just re-sends once
+(idempotent) and rebuilds it.
+
 **Non-destructive & idempotent.** Every record uses a deterministic UUID (v5), and
 `changed` timestamps are the record's own (data-derived), never `now`. Since
 ZenMoney resolves conflicts by last-write-wins on `changed`, any edit you make in

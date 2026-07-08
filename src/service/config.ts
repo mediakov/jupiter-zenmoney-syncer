@@ -22,6 +22,8 @@ export interface ServiceConfig {
   solanaRpc: string;
   /** Cache file for resolved signature → source-address lookups. */
   sigCacheFile: string;
+  /** Ledger of already-pushed records, so re-syncs only send new/changed ones. */
+  pushLedgerFile: string;
 }
 
 /** Parse a duration like "6h", "30m", "90s", or a plain number of ms. */
@@ -71,5 +73,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     serviceToken: env.SERVICE_TOKEN || null,
     solanaRpc: env.SOLANA_RPC || "https://api.mainnet-beta.solana.com",
     sigCacheFile: env.SIG_CACHE_FILE || "/data/sig-cache.json",
+    pushLedgerFile: env.PUSH_LEDGER_FILE || "/data/push-ledger.json",
   };
 }
