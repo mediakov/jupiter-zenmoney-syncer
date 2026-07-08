@@ -55,8 +55,8 @@ export function controlPanelHtml(): string {
 <p class="muted">Connect both sides, then it syncs automatically.</p>
 
 <div class="card">
-  <div class="row"><strong>Admin token</strong> <span class="muted">(only if SERVICE_TOKEN is set)</span></div>
-  <div class="row"><input id="admin" type="password" placeholder="SERVICE_TOKEN (leave blank if none)" /></div>
+  <div class="row"><strong>Admin token</strong> <span class="muted">(SERVICE_TOKEN, if set — remembered on this browser)</span></div>
+  <div class="row"><input id="admin" type="password" placeholder="paste once; saved locally" /></div>
 </div>
 
 <div class="card">
@@ -312,6 +312,16 @@ export function controlPanelHtml(): string {
   $("jup-email").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCode($("btn-sendcode")); });
   $("jup-code").addEventListener("keydown", (e) => { if (e.key === "Enter") verify($("btn-verify")); });
   $("zen-token").addEventListener("keydown", (e) => { if (e.key === "Enter") saveZen($("btn-savezen")); });
+
+  // Remember the admin token so it's entered once. Safe here: same-origin,
+  // loopback-only, no third-party scripts. Loaded before the first fetch below.
+  try {
+    const saved = localStorage.getItem("jupzen_token");
+    if (saved) $("admin").value = saved;
+    $("admin").addEventListener("input", () => {
+      try { localStorage.setItem("jupzen_token", $("admin").value.trim()); } catch (e) { /* storage disabled */ }
+    });
+  } catch (e) { /* storage disabled */ }
 
   refresh();
   setInterval(() => { if (!document.querySelector("button[data-busy]")) refresh(); }, 5000);
