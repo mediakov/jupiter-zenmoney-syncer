@@ -15,12 +15,26 @@ Both `JUP_EMAIL` and `ZEN_TOKEN` are optional at startup — you can connect
 Jupiter and ZenMoney entirely from the UI instead.
 
 ```bash
-# Docker (recommended)
+# Docker (recommended) — works great in OrbStack
+cp .env.example .env      # fill in SOLANA_RPC etc. (all optional; gitignored)
 docker compose up -d
 
 # or directly
 npm run serve
 ```
+
+### Recommended setup: OrbStack + a menu-bar tray
+
+The intended deployment on a Mac: run the service as a container in
+[OrbStack](https://orbstack.dev) (which relaunches it on login and publishes
+`localhost:8080` for you), and drive it from a lightweight **SwiftBar menu-bar
+agent** — status icon, last/next sync, and a *Sync now* button, right in the
+menu bar. The tray is a pure HTTP client, so it works the same whether the
+service runs in Docker or via `npm run serve`. Setup: [`menubar/`](menubar/).
+
+> Uptime note: a syncer only needs to run inside Jupiter's ~7-day session window.
+> A container in OrbStack covers that as long as the Mac is on most days; for true
+> 24/7, run the same image on an always-on host (Pi / NAS / small VPS).
 
 **Bootstrap in the browser (easiest):** open **http://localhost:8080** and use the
 control panel:
