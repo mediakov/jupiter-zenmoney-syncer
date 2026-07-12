@@ -23,19 +23,27 @@ export type SyncKind = "expense" | "income" | "transfer";
 export interface SyncDetail {
   at: string;
   jupiter: {
-    cards: Array<{ last4: string; status: string }>;
-    balance: { currency: string; spendableBalance: number; withdrawableBalance: number } | null;
+    // Nullable throughout: this mirrors what Jupiter actually returned, and the API
+    // does omit fields. Showing "—" is honest; inventing a 0 or "" is not.
+    cards: Array<{ last4: string | null; status: string | null }>;
+    balance: { currency: string | null; spendableBalance: number | null; withdrawableBalance: number | null } | null;
     transactionCount: number;
     /** A sample of the most recent transactions. */
     transactions: Array<{
       id: string;
-      date: string;
-      type: string;
-      direction: string;
-      amount: string;
-      currency: string;
+      date: string | null;
+      type: string | null;
+      direction: string | null;
+      amount: string | null;
+      currency: string | null;
       merchant: string | null;
     }>;
+    /**
+     * Transactions Jupiter sent that could not be represented (unknown direction,
+     * unreadable amount or date) and were therefore NOT synced. Surfaced rather than
+     * dropped quietly — a silent skip looks exactly like "there was nothing there".
+     */
+    skipped: Array<{ id: string; reason: string }>;
   };
   zenmoney:
     | {

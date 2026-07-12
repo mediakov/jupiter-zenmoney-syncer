@@ -1,4 +1,12 @@
-import { JupiterCard } from "jupiter-card-sdk";
+import {
+  JupiterCard,
+  directionSign,
+  isHold,
+  parseMoney,
+  signedAmount,
+  signedOriginalAmount,
+  transactionDate,
+} from "jupiter-card-sdk";
 import { toScrapeResult } from "../convert.js";
 import { scrapeToDiff } from "../toDiff.js";
 import { ZenMoneyClient } from "../zenClient.js";
@@ -134,22 +142,37 @@ export class SyncService {
 
       // what we received from Jupiter (sample the most recent transactions)
       const jupiterDetail: SyncDetail["jupiter"] = {
-        cards: cards.map((c) => ({ last4: c.last4, status: c.status })),
-        balance: { currency: balance.currency, spendableBalance: balance.spendableBalance, withdrawableBalance: balance.withdrawableBalance },
+        cards: cards.map((c) => ({ last4: c.last4 ?? null, status: c.status ?? null })),
+        balance: {
+          currency: balance.currency ?? null,
+          spendableBalance: balance.spendableBalance ?? null,
+          withdrawableBalance: balance.withdrawableBalance ?? null,
+        },
         transactionCount: txs.length,
         transactions: [...txs]
-          .sort((a, b) => (a.transactionTimestamp < b.transactionTimestamp ? 1 : -1))
+          // Sort on the parsed date: a record with an unreadable timestamp has no
+          // place in the ordering, so send it to the end rather than let a string
+          // compare against `undefined` scramble the sample.
+          .sort((a, b) => (transactionDate(b)?.getTime() ?? -Infinity) - (transactionDate(a)?.getTime() ?? -Infinity))
           .slice(0, 25)
           .map((t) => ({
             id: t.id,
-            date: t.transactionTimestamp,
-            type: t.type,
-            direction: t.direction,
-            amount: t.settlementAmount,
-            currency: t.settlementCurrency,
+            date: t.transactionTimestamp ?? null,
+            type: t.type ?? null,
+            direction: t.direction ?? null,
+            amount: t.settlementAmount ?? null,
+            currency: t.settlementCurrency ?? null,
             merchant: t.card?.merchantName ?? null,
           })),
+        skipped: scrape.skipped,
       };
+      if (scrape.skipped.length > 0) {
+        this.log(
+          "warn",
+          `${scrape.skipped.length} transaction(s) could not be represented and were NOT synced: ` +
+            scrape.skipped.map((s) => `${s.id} (${s.reason})`).join("; "),
+        );
+      }
 
       let pushed = false;
       let zenmoneyDetail: SyncDetail["zenmoney"];
@@ -177,29 +200,42 @@ export class SyncService {
         pushed = true;
 
         // Reconstruct how each Jupiter transaction was classified, in human terms.
-        const amt = (s: string | number | null | undefined) => (Number.isFinite(Number(s)) ? Number(s) : 0);
+        //
+        // Build this from the transactions that were ACTUALLY converted, not from the
+        // raw `txs`: a record the converter could not represent is absent from
+        // `scrape.transactions` (and so from `diff.transactions`), and mapping over the
+        // raw list would shift the two out of alignment — the index lookup below would
+        // then report the wrong transactions as pushed.
+        const skippedIds = new Set(scrape.skipped.map((s) => s.id));
+        const syncedTxs = txs.filter((t) => !skippedIds.has(t.id));
         const acctTitle = new Map(accounts.map((a) => [a.id, a.title]));
         const cardTitle = scrape.accounts[0]?.title ?? "Jupiter Card";
         const cardCcy = balance.currency || "USD";
-        const mapped = txs.map((t) => {
-          const credit = t.direction === "CREDIT";
+        const mapped = syncedTxs.flatMap((t) => {
+          const at = transactionDate(t);
+          const sum = signedAmount(t);
+          // Unreachable: a synced transaction is by definition readable. The guard is
+          // what lets the rest of this be typed honestly instead of asserted with `!`.
+          if (at === null || sum === null) return [];
+
+          const credit = directionSign(t) === 1;
           const src = t.type !== "CARD" && credit ? transferSources.get(t.id) : undefined;
           const kind: SyncKind = src ? "transfer" : credit ? "income" : "expense";
-          return {
-            date: t.transactionTimestamp,
-            kind,
-            amount: Math.abs(amt(t.settlementAmount)),
-            currency: t.settlementCurrency || cardCcy,
-            account: cardTitle,
-            source: src ? (acctTitle.get(src.accountId) ?? "source account") : null,
-            payee: t.card?.merchantName ?? null,
-            mcc: t.card?.merchantCategoryCode ? Number(t.card.merchantCategoryCode) || null : null,
-            op:
-              t.transactionCurrency && t.transactionCurrency !== t.settlementCurrency
-                ? `${amt(t.transactionAmount).toFixed(2)} ${t.transactionCurrency}`
-                : null,
-            hold: t.card ? t.card.settlementTimestamp === null : false,
-          };
+          const original = signedOriginalAmount(t);
+          return [
+            {
+              date: at.toISOString(),
+              kind,
+              amount: Math.abs(sum),
+              currency: t.settlementCurrency || cardCcy,
+              account: cardTitle,
+              source: src ? (acctTitle.get(src.accountId) ?? "source account") : null,
+              payee: t.card?.merchantName ?? null,
+              mcc: parseMoney(t.card?.merchantCategoryCode) ?? null,
+              op: original === null ? null : `${Math.abs(original.sum).toFixed(2)} ${original.currency}`,
+              hold: isHold(t),
+            },
+          ];
         });
 
         const counts: Record<SyncKind, number> = { expense: 0, income: 0, transfer: 0 };
@@ -209,24 +245,29 @@ export class SyncService {
           totals[m.kind] += m.amount;
         }
 
-        const deposits = txs
-          .filter((t) => t.type !== "CARD" && t.direction === "CREDIT")
-          .sort((a, b) => (a.transactionTimestamp < b.transactionTimestamp ? 1 : -1))
-          .map((t) => {
+        const deposits = syncedTxs
+          .filter((t) => t.type !== "CARD" && directionSign(t) === 1)
+          .sort((a, b) => (transactionDate(b)?.getTime() ?? 0) - (transactionDate(a)?.getTime() ?? 0))
+          .flatMap((t) => {
+            const at = transactionDate(t);
+            const sum = signedAmount(t);
+            if (at === null || sum === null) return [];
             const src = transferSources.get(t.id);
             const sig = t.onchainSignature ?? null;
-            return {
-              date: t.transactionTimestamp,
-              amount: Math.abs(amt(t.settlementAmount)),
-              currency: t.settlementCurrency || cardCcy,
-              result: (src ? "transfer" : "income") as "transfer" | "income",
-              detail: src
-                ? `→ ${acctTitle.get(src.accountId) ?? "source account"}`
-                : sig
-                  ? "no matching account — kept as income"
-                  : "no on-chain signature — kept as income",
-              sig,
-            };
+            return [
+              {
+                date: at.toISOString(),
+                amount: Math.abs(sum),
+                currency: t.settlementCurrency || cardCcy,
+                result: (src ? "transfer" : "income") as "transfer" | "income",
+                detail: src
+                  ? `→ ${acctTitle.get(src.accountId) ?? "source account"}`
+                  : sig
+                    ? "no matching account — kept as income"
+                    : "no on-chain signature — kept as income",
+                sig,
+              },
+            ];
           });
 
         // The sample of what was ACTUALLY sent this run (the delta). `mapped`,

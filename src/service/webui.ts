@@ -31,6 +31,7 @@ export function controlPanelHtml(): string {
   th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #8882; white-space: nowrap; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .neg { color: #dc2626; } .pos { color: #16a34a; }
+  .warn { margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: #fef3c7; color: #92400e; font-size: 12px; }
   .scroll { max-height: 340px; overflow: auto; }
   .k { font-size: .72rem; padding: .05rem .45rem; border-radius: 999px; text-transform: capitalize; white-space: nowrap; }
   .k-expense { background: #dc262622; color: #dc2626; }
@@ -262,15 +263,32 @@ export function controlPanelHtml(): string {
 
     // ── Received from Jupiter ──
     const j = d.jupiter;
-    const bal = j.balance ? money(j.balance.spendableBalance) + " " + j.balance.currency : "—";
+    // A balance Jupiter did not send is unknown, not 0.00 — Number(null) is 0, and a
+    // confidently wrong balance on screen is worse than an honest dash.
+    const bal =
+      j.balance && j.balance.spendableBalance !== null && j.balance.spendableBalance !== undefined
+        ? money(j.balance.spendableBalance) + " " + (j.balance.currency || "")
+        : "—";
     $("jup-meta").textContent = "@ " + new Date(d.at).toLocaleString();
+    // Anything Jupiter omitted shows as "—". A field is only coloured as money in or
+    // out when the direction is one we actually recognise; an unknown direction is not
+    // quietly painted red, because we do not know that it was money leaving.
+    const dash = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+    const dirClass = (dir) => (dir === "CREDIT" ? "pos" : dir === "DEBIT" ? "neg" : "");
+    const skipped = j.skipped || [];
+
     $("jup-data").innerHTML =
-      '<div class="muted">cards: ' + j.cards.map((c) => "•" + esc(c.last4) + " (" + esc(c.status) + ")").join(", ") +
+      '<div class="muted">cards: ' + j.cards.map((c) => "•" + esc(dash(c.last4)) + " (" + esc(dash(c.status)) + ")").join(", ") +
       " · balance: " + esc(bal) + " · " + j.transactionCount + " transactions</div>" +
+      (skipped.length
+        ? '<div class="warn">⚠️ ' + skipped.length + " transaction(s) could not be read and were NOT synced: " +
+          esc(skipped.map((s) => s.id + " — " + s.reason).join("; ")) + "</div>"
+        : "") +
       rows("<tr><th>date</th><th>type</th><th>dir</th><th>amount</th><th>merchant</th></tr>" +
         j.transactions.map((t) =>
-          "<tr><td>" + esc(t.date.slice(0, 10)) + "</td><td>" + esc((t.type || "").toLowerCase()) + "</td><td>" + esc(t.direction) +
-          '</td><td class="num ' + (t.direction === "CREDIT" ? "pos" : "neg") + '">' + esc(t.amount) + " " + esc(t.currency) +
+          "<tr><td>" + esc(t.date ? t.date.slice(0, 10) : "—") + "</td><td>" + esc((t.type || "").toLowerCase()) +
+          "</td><td>" + esc(dash(t.direction)) +
+          '</td><td class="num ' + dirClass(t.direction) + '">' + esc(dash(t.amount)) + " " + esc(dash(t.currency)) +
           "</td><td>" + esc(t.merchant || "") + "</td></tr>").join(""));
 
     // ── Pushed to ZenMoney ──
