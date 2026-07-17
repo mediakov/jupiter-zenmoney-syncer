@@ -110,11 +110,13 @@ describe("toZenTransaction", () => {
     expect(t!.movements[0].id).toBe("plasma:tx_1");
     expect(t!.movements[0].sum).toBe(-10);
     expect(t!.hold).toBe(false);
-    expect(t!.merchant).toEqual({ fullTitle: "Uber Eats", mcc: 5812, city: null, country: null, location: null });
+    // The PARSED form: Plasma gives the parts already split, so `title` — not `fullTitle`,
+    // which is for a raw descriptor ZenMoney would have to parse itself.
+    expect(t!.merchant).toEqual({ title: "Uber Eats", mcc: 5812, city: null, country: null, location: null });
     expect(t!.comment).toBeNull();
   });
 
-  it("passes through the merchant's city/country, the only place data Plasma sends", () => {
+  it("uses the parsed merchant form, with the city/country Plasma splits out for us", () => {
     // Real shape: location is {address, city, country, formatted} — no lat/lng, which is
     // what ZenMoney's `location` field means, so that stays null.
     const t = toZenTransaction(
@@ -128,7 +130,9 @@ describe("toZenTransaction", () => {
       } as Partial<Transaction>),
       ids,
     );
-    expect(t!.merchant).toMatchObject({ city: "Amsterdam", country: "NL", location: null });
+    expect(t!.merchant).toEqual({ title: "Uber Eats", mcc: 5812, city: "Amsterdam", country: "NL", location: null });
+    // Never a hybrid: a fullTitle alongside a pre-split city is neither of ZenMoney's forms.
+    expect("fullTitle" in t!.merchant!).toBe(false);
   });
 
   it("does not add fee_total on top of the amount — amount is already the full impact", () => {

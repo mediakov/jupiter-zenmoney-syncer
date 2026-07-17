@@ -186,7 +186,9 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
   const changed = Math.floor(tx.date.getTime() / 1000);
   const instrId = requireInstrument(accountInstrument, ctx.instruments);
   const accId = movementAccountId(m);
-  const payee = tx.merchant?.fullTitle ?? tx.merchant?.title ?? null;
+  // The two merchant forms are alternatives: a raw descriptor for ZenMoney to parse, or
+  // parts we already have split. Read whichever this is, rather than guessing at both.
+  const payee = tx.merchant ? ("fullTitle" in tx.merchant ? tx.merchant.fullTitle : tx.merchant.title) : null;
 
   let opIncome: number | null = null;
   let opIncomeInstrument: number | null = null;
@@ -233,8 +235,11 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
     tag: null,
     merchant: null,
     reminderMarker: null,
-    latitude: null,
-    longitude: null,
+    // The diff carries a point, not a place: it has latitude/longitude and no
+    // city/country. A parsed merchant's city/country therefore has nowhere to go here —
+    // it survives in the plugin-format ScrapeResult, and stops at this boundary.
+    latitude: tx.merchant?.location?.latitude ?? null,
+    longitude: tx.merchant?.location?.longitude ?? null,
     opIncome,
     opIncomeInstrument,
     opOutcome,

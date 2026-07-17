@@ -160,15 +160,22 @@ export function toZenTransaction(tx: Transaction, accounts: PlasmaAccountIds): Z
 
   let merchant: ZenMerchant | null = null;
   if (tx.merchant?.name) {
-    // `location` here is a lat/lng pair, which Plasma does not send. It does send a
-    // city/country, which are their own fields — passing them through rather than
-    // dropping the only place data the API gives us.
-    const place = tx.merchant.location as { city?: string; country?: string } | undefined;
+    // The PARSED form, because Plasma hands over the parts already split: a clean `name`
+    // ("Uber Eats") plus a city/country. `fullTitle` is for the opposite case — a raw
+    // descriptor like "NL AMSTERDAM UBER 748264" that ZenMoney parses itself — so pairing
+    // it with a pre-split city, as this used to, is neither form.
+    //
+    // `raw_name` ("UBER   * EATS PENDING") is the descriptor, but it is not passed as
+    // `fullTitle`: that would ask ZenMoney to re-derive, and probably worse, what the API
+    // has already told us cleanly.
+    //
+    // ZenMoney's `location` is a lat/lng point, which Plasma does not send — its
+    // `location` is a postal one. So city/country are populated and lat/lng stays null.
     merchant = {
-      fullTitle: tx.merchant.name,
+      title: tx.merchant.name,
+      city: tx.merchant.location?.city || null,
+      country: tx.merchant.location?.country || null,
       mcc: mccFor(tx),
-      city: place?.city || null,
-      country: place?.country || null,
       location: null,
     };
   }

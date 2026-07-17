@@ -41,14 +41,42 @@ export interface ZenMovement {
   fee: number | null;
 }
 
-export interface ZenMerchant {
-  fullTitle?: string;
-  title?: string;
-  city?: string | null;
-  country?: string | null;
-  mcc: number | null;
-  location?: { latitude: number; longitude: number } | null;
+export interface ZenLocation {
+  latitude: number;
+  longitude: number;
 }
+
+/**
+ * A merchant whose parts the source already gives us separately. Use this when the API
+ * hands over a clean name plus a city/country (Plasma does).
+ */
+export interface ZenParsedMerchant {
+  title: string;
+  city: string | null;
+  country: string | null;
+  mcc: number | null;
+  location: ZenLocation | null;
+  category?: string;
+}
+
+/**
+ * A merchant we only have the raw descriptor for, e.g. "NL AMSTERDAM UBER 748264".
+ * ZenMoney parses the title/city/country out of `fullTitle` itself — which is exactly
+ * why you must not hand it a pre-split city alongside one.
+ */
+export interface ZenNonParsedMerchant {
+  fullTitle: string;
+  mcc: number | null;
+  location: ZenLocation | null;
+  category?: string;
+}
+
+/**
+ * The two forms are alternatives, not a grab-bag: ZenMoney reads `fullTitle` OR the
+ * parsed fields, never both. Modelling it as a union stops a hybrid — a `fullTitle`
+ * carrying a separate `city` — from typechecking, which is what we had been emitting.
+ */
+export type ZenMerchant = ZenParsedMerchant | ZenNonParsedMerchant;
 
 export interface ZenTransaction {
   id?: string;
