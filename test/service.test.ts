@@ -114,7 +114,7 @@ describe("control server", () => {
   it("POST /auth/<card>/send-code sets that card's email, then sends", async () => {
     const noEmail = await post("/auth/plasma/send-code");
     expect(noEmail.status).toBe(400); // no email set for that card yet
-    expect((await noEmail.json()).error).toContain("Plasma One"); // names the right card
+    expect(((await noEmail.json()) as { error: string }).error).toContain("Plasma One"); // names the right card
 
     expect((await post("/auth/plasma/send-code", { email: "not-an-email" })).status).toBe(400);
 
