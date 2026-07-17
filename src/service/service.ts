@@ -1,38 +1,36 @@
-import {
-  JupiterCard,
-  directionSign,
-  isHold,
-  parseMoney,
-  signedAmount,
-  signedOriginalAmount,
-  transactionDate,
-} from "jupiter-card-sdk";
-import { toScrapeResult } from "../convert.js";
-import { scrapeToDiff } from "../toDiff.js";
+import { scrapeToDiff, type SourceAccount } from "../toDiff.js";
 import { ZenMoneyClient } from "../zenClient.js";
 import { SolanaResolver } from "../solana.js";
-import { SignatureCache, resolveDepositSources } from "../transfers.js";
+import { SignatureCache } from "../transfers.js";
 import { PushLedger } from "../pushLedger.js";
+import type { ScrapeResult, ZenTransaction } from "../zenTypes.js";
 import type { ServiceConfig } from "./config.js";
 import { CredentialStore } from "./credentials.js";
+import { JupiterProvider } from "./jupiterProvider.js";
+import { PlasmaProvider } from "./plasmaProvider.js";
+import { isConfigured, type CardProvider, type ProviderDetail, type ProviderId, type ProviderRead } from "./providers.js";
 import { initialState, type ServiceState, type SyncDetail, type SyncKind } from "./state.js";
 
 type Logger = (level: "info" | "warn" | "error", msg: string, extra?: unknown) => void;
 
 /**
- * The long-running syncer: a periodic loop that reads Jupiter and pushes to
- * ZenMoney, plus headless auth bootstrap. Errors in one run never crash the
- * service — they're recorded in state and the loop continues.
+ * The long-running syncer: a periodic loop that reads every configured card and pushes to
+ * ZenMoney, plus headless auth bootstrap. Errors in one run never crash the service —
+ * they're recorded in state and the loop continues.
+ *
+ * Multi-card by construction. Each card is a {@link CardProvider} with its own login,
+ * session file and OTP, and a card that is not configured, or not yet authenticated, is
+ * skipped rather than blocking the others: one expired session must not stop the other
+ * card from syncing.
  */
 export class SyncService {
-  private jupiter: JupiterCard | null;
-  private jupiterEmail: string | null;
+  private readonly providers: CardProvider[];
   private readonly creds: CredentialStore;
   private readonly solana: SolanaResolver;
   private readonly sigCache: SignatureCache;
   private readonly ledger: PushLedger;
   private zen: ZenMoneyClient | null;
-  private readonly state: ServiceState = initialState();
+  private readonly state: ServiceState;
   private lastDetail: SyncDetail | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -42,34 +40,59 @@ export class SyncService {
     private readonly log: Logger = () => {},
   ) {
     this.creds = new CredentialStore(config.credFile);
-    // Jupiter email: env takes precedence, else a previously UI-provided one.
-    this.jupiterEmail = config.jupiterEmail ?? this.creds.jupiterEmail ?? null;
-    this.jupiter = this.jupiterEmail ? this.buildJupiter(this.jupiterEmail) : null;
+    // Env takes precedence, else a previously UI-provided email.
+    this.providers = [
+      new JupiterProvider(config.jupiterEmail ?? this.creds.jupiterEmail ?? null, config.sessionFile),
+      new PlasmaProvider(config.plasmaEmail ?? this.creds.plasmaEmail ?? null, config.plasmaSessionFile),
+    ];
     this.solana = new SolanaResolver({ rpc: config.solanaRpc });
     this.sigCache = new SignatureCache(config.sigCacheFile);
     this.ledger = new PushLedger(config.pushLedgerFile);
-    // ZenMoney token: env takes precedence, else a previously UI-provided one.
     const token = config.zenToken ?? this.creds.zenToken ?? null;
     this.zen = token ? new ZenMoneyClient({ token }) : null;
-    this.state.jupiterEmail = this.jupiterEmail;
-    this.state.authenticated = this.jupiter?.isAuthenticated() ?? false;
+    this.state = initialState(this.providerStates());
     this.state.zenConnected = this.zen != null;
-    this.state.status = this.state.authenticated ? "idle" : "needs-auth";
+    this.state.status = this.needsAuth() ? "needs-auth" : "idle";
   }
 
-  private buildJupiter(email: string): JupiterCard {
-    return new JupiterCard({ auth: { kind: "email", email, sessionFile: this.config.sessionFile } });
+  private providerStates() {
+    return this.providers.map((p) => ({
+      id: p.id,
+      label: p.label,
+      email: p.email,
+      authenticated: p.isAuthenticated(),
+    }));
   }
 
-  /** Set (or change) the Jupiter account email (from the web UI/API); rebuilds the client. */
-  setJupiterEmail(email: string): void {
-    this.jupiterEmail = email;
-    this.creds.setJupiterEmail(email);
-    this.jupiter = this.buildJupiter(email);
-    this.state.jupiterEmail = email;
-    this.state.authenticated = this.jupiter.isAuthenticated();
-    this.state.status = this.state.authenticated ? "idle" : "needs-auth";
-    this.log("info", `Jupiter email set: ${email}`);
+  /** The cards that are configured AND logged in — the ones a sync can actually read. */
+  private ready(): CardProvider[] {
+    return this.providers.filter((p) => isConfigured(p) && p.isAuthenticated());
+  }
+
+  /** True when a card has an email but no session: a human needs to enter an OTP. */
+  private needsAuth(): boolean {
+    return this.providers.some((p) => isConfigured(p) && !p.isAuthenticated());
+  }
+
+  private provider(id: string): CardProvider {
+    const p = this.providers.find((x) => x.id === id);
+    if (!p) throw new Error(`unknown provider "${id}"`);
+    return p;
+  }
+
+  private refreshProviderState(): void {
+    this.state.providers = this.providerStates();
+  }
+
+  /** Set (or change) a card's account email (from the web UI/API); rebuilds its client. */
+  setEmail(id: ProviderId, email: string): void {
+    const p = this.provider(id);
+    p.setEmail(email);
+    if (id === "jupiter") this.creds.setJupiterEmail(email);
+    else this.creds.setPlasmaEmail(email);
+    this.refreshProviderState();
+    this.state.status = this.needsAuth() ? "needs-auth" : "idle";
+    this.log("info", `${p.label} email set: ${email}`);
   }
 
   /** Store a ZenMoney API token (from the web UI/API) and start using it. */
@@ -84,12 +107,12 @@ export class SyncService {
     return this.state;
   }
 
-  /** Detail of the last sync: what we read from Jupiter and pushed to ZenMoney. */
+  /** Detail of the last sync: what each card returned and what was pushed to ZenMoney. */
   getLastDetail(): SyncDetail | null {
     return this.lastDetail;
   }
 
-  /** Begin the schedule; runs an initial sync if already authenticated. */
+  /** Begin the schedule; runs an initial sync if any card is already authenticated. */
   start(): void {
     this.log("info", `service started; interval ${this.config.intervalMs}ms, years ${this.config.years.join(",")}`);
     const tick = () => {
@@ -97,8 +120,14 @@ export class SyncService {
       void this.runSync();
     };
     this.timer = setInterval(tick, this.config.intervalMs);
-    if (this.jupiter?.isAuthenticated()) tick();
-    else this.log("warn", "not authenticated — set the Jupiter email, then POST /auth/send-code and /auth/verify");
+    if (this.ready().length > 0) tick();
+    const pending = this.providers.filter((p) => isConfigured(p) && !p.isAuthenticated());
+    for (const p of pending) {
+      this.log("warn", `${p.label} not authenticated — POST /auth/${p.id}/send-code, then /auth/${p.id}/verify`);
+    }
+    if (this.providers.every((p) => !isConfigured(p))) {
+      this.log("warn", "no card configured — set an email via the UI or JUP_EMAIL / PLASMA_EMAIL");
+    }
   }
 
   stop(): void {
@@ -106,88 +135,76 @@ export class SyncService {
     this.timer = null;
   }
 
-  /** Send the Jupiter login OTP to the configured email. */
-  async sendCode(): Promise<void> {
-    if (!this.jupiter) throw new Error("Jupiter email not set — provide it first");
-    await this.jupiter.login.sendCode();
-    this.log("info", `OTP sent to ${this.jupiterEmail}`);
+  /** Send a card's login OTP to its configured email. */
+  async sendCode(id: ProviderId): Promise<void> {
+    const p = this.provider(id);
+    await p.sendCode();
+    this.log("info", `${p.label} OTP sent to ${p.email}`);
   }
 
-  /** Complete Jupiter login with the emailed code, then kick off a sync. */
-  async verifyCode(code: string): Promise<void> {
-    if (!this.jupiter) throw new Error("Jupiter email not set — provide it first");
-    await this.jupiter.login.verify(code);
-    this.state.authenticated = true;
-    this.state.status = "idle";
-    this.log("info", "authenticated");
+  /** Complete a card's login with its emailed code, then kick off a sync. */
+  async verifyCode(id: ProviderId, code: string): Promise<void> {
+    const p = this.provider(id);
+    await p.verify(code);
+    this.refreshProviderState();
+    this.state.status = this.needsAuth() ? "needs-auth" : "idle";
+    this.log("info", `${p.label} authenticated`);
     void this.runSync();
   }
 
-  /** Run one sync across all configured years. Safe to call concurrently (guarded). */
+  /** Run one sync across every ready card. Safe to call concurrently (guarded). */
   async runSync(): Promise<void> {
     if (this.running) return;
-    const jup = this.jupiter;
-    if (!jup || !jup.isAuthenticated()) {
+    const ready = this.ready();
+    if (ready.length === 0) {
       this.state.status = "needs-auth";
-      this.state.authenticated = false;
+      this.refreshProviderState();
       return;
     }
     this.running = true;
     this.state.status = "syncing";
     try {
-      const [cards, balance] = await Promise.all([jup.cards.list(), jup.cards.balance()]);
-      const txs = [];
-      for (const year of this.config.years) txs.push(...(await jup.transactions.all({ year })));
-      const scrape = toScrapeResult(cards, balance, txs);
+      // 1. read every ready card
+      const reads: ProviderRead[] = [];
+      for (const p of ready) reads.push(await p.read(this.config.years));
 
-      // what we received from Jupiter (sample the most recent transactions)
-      const jupiterDetail: SyncDetail["jupiter"] = {
-        cards: cards.map((c) => ({ last4: c.last4 ?? null, status: c.status ?? null })),
-        balance: {
-          currency: balance.currency ?? null,
-          spendableBalance: balance.spendableBalance ?? null,
-          withdrawableBalance: balance.withdrawableBalance ?? null,
-        },
-        transactionCount: txs.length,
-        transactions: [...txs]
-          // Sort on the parsed date: a record with an unreadable timestamp has no
-          // place in the ordering, so send it to the end rather than let a string
-          // compare against `undefined` scramble the sample.
-          .sort((a, b) => (transactionDate(b)?.getTime() ?? -Infinity) - (transactionDate(a)?.getTime() ?? -Infinity))
-          .slice(0, 25)
-          .map((t) => ({
-            id: t.id,
-            date: t.transactionTimestamp ?? null,
-            type: t.type ?? null,
-            direction: t.direction ?? null,
-            amount: t.settlementAmount ?? null,
-            currency: t.settlementCurrency ?? null,
-            merchant: t.card?.merchantName ?? null,
-          })),
-        skipped: scrape.skipped,
+      const scrape: ScrapeResult = {
+        accounts: reads.flatMap((r) => r.scrape.accounts),
+        transactions: reads.flatMap((r) => r.scrape.transactions),
       };
-      if (scrape.skipped.length > 0) {
-        this.log(
-          "warn",
-          `${scrape.skipped.length} transaction(s) could not be represented and were NOT synced: ` +
-            scrape.skipped.map((s) => `${s.id} (${s.reason})`).join("; "),
-        );
+      const sources: ProviderDetail[] = reads.map((r) => r.detail);
+
+      for (const d of sources) {
+        if (d.skipped.length > 0) {
+          this.log(
+            "warn",
+            `${d.label}: ${d.skipped.length} record(s) not booked: ` +
+              d.skipped.map((s) => `${s.id} (${s.reason})`).join("; "),
+          );
+        }
       }
 
+      // 2. push
       let pushed = false;
       let zenmoneyDetail: SyncDetail["zenmoney"];
       if (this.zen && !this.config.dryRun) {
         const { map, userId, serverTimestamp, accounts } = await this.zen.context();
-        // trace deposit sources → map matching ones to transfers (else income)
-        const transferSources = await resolveDepositSources(txs, {
-          solana: this.solana,
-          accounts,
-          cache: this.sigCache,
-          log: (m) => this.log("info", m),
-        });
+
+        // Each card traces its own deposits — Jupiter via a Solana lookup, Plasma from the
+        // record. One map: the keys are converter ids, which are provider-namespaced.
+        const transferSources = new Map<string, SourceAccount>();
+        for (const r of reads) {
+          const found = await r.resolveTransfers({
+            accounts,
+            solana: this.solana,
+            sigCache: this.sigCache,
+            log: (m) => this.log("info", m),
+          });
+          for (const [k, v] of found) transferSources.set(k, v);
+        }
+
         const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
-        // Only send what's new or changed since our last successful push — don't
-        // re-transmit the whole window every sync.
+        // Only send what's new or changed since our last successful push.
         const toPush = this.ledger.pending(diff.accounts, diff.transactions, diff.deletions);
         const hasNew = toPush.accounts.length > 0 || toPush.transactions.length > 0 || toPush.deletions.length > 0;
         let resp: Awaited<ReturnType<ZenMoneyClient["push"]>> | null = null;
@@ -195,47 +212,42 @@ export class SyncService {
           resp = await this.zen.push(toPush.accounts, toPush.transactions, serverTimestamp, toPush.deletions);
           this.ledger.record(toPush);
         }
-        // keep the ledger bounded to the current window (prune aged-out records)
         this.ledger.retain(diff.accounts, diff.transactions, diff.deletions);
         pushed = true;
 
-        // Reconstruct how each Jupiter transaction was classified, in human terms.
+        // 3. reconstruct how each record was classified, in human terms.
         //
-        // Build this from the transactions that were ACTUALLY converted, not from the
-        // raw `txs`: a record the converter could not represent is absent from
-        // `scrape.transactions` (and so from `diff.transactions`), and mapping over the
-        // raw list would shift the two out of alignment — the index lookup below would
-        // then report the wrong transactions as pushed.
-        const skippedIds = new Set(scrape.skipped.map((s) => s.id));
-        const syncedTxs = txs.filter((t) => !skippedIds.has(t.id));
+        // Built from the CONVERTED transactions and the diff — not from any card's raw
+        // records. Those are provider-specific, and the two lists are index-aligned with
+        // the diff only after conversion; reading raw would both re-implement each card's
+        // quirks here and risk misreporting which rows were pushed.
         const acctTitle = new Map(accounts.map((a) => [a.id, a.title]));
-        const cardTitle = scrape.accounts[0]?.title ?? "Jupiter Card";
-        const cardCcy = balance.currency || "USD";
-        const mapped = syncedTxs.flatMap((t) => {
-          const at = transactionDate(t);
-          const sum = signedAmount(t);
-          // Unreachable: a synced transaction is by definition readable. The guard is
-          // what lets the rest of this be typed honestly instead of asserted with `!`.
-          if (at === null || sum === null) return [];
+        const titleByAccountId = new Map(scrape.accounts.map((a) => [a.id, a.title]));
+        const providerOf = (tx: ZenTransaction): ProviderId | null =>
+          tx.id?.startsWith("plasma:") ? "plasma" : reads.some((r) => r.scrape.transactions.includes(tx)) ? "jupiter" : null;
 
-          const credit = directionSign(t) === 1;
-          const src = t.type !== "CARD" && credit ? transferSources.get(t.id) : undefined;
-          const kind: SyncKind = src ? "transfer" : credit ? "income" : "expense";
-          const original = signedOriginalAmount(t);
-          return [
-            {
-              date: at.toISOString(),
-              kind,
-              amount: Math.abs(sum),
-              currency: t.settlementCurrency || cardCcy,
-              account: cardTitle,
-              source: src ? (acctTitle.get(src.accountId) ?? "source account") : null,
-              payee: t.card?.merchantName ?? null,
-              mcc: parseMoney(t.card?.merchantCategoryCode) ?? null,
-              op: original === null ? null : `${Math.abs(original.sum).toFixed(2)} ${original.currency}`,
-              hold: isHold(t),
-            },
-          ];
+        const mapped = scrape.transactions.map((tx, i) => {
+          const d = diff.transactions[i]!;
+          const m = tx.movements[0];
+          const isTransfer = d.income > 0 && d.outcome > 0;
+          const kind: SyncKind = isTransfer ? "transfer" : d.income > 0 ? "income" : "expense";
+          const own = "id" in m.account ? titleByAccountId.get(m.account.id) : undefined;
+          const payee = d.payee ?? d.originalPayee;
+          return {
+            date: tx.date.toISOString(),
+            kind,
+            amount: Math.abs(m.sum ?? 0),
+            currency: scrape.accounts.find((a) => "id" in m.account && a.id === m.account.id)?.instrument ?? "USD",
+            account: own ?? "card",
+            // For a transfer: where the money came from — either another of our own
+            // accounts (earn → cash) or an existing ZenMoney account (a traced deposit).
+            source: isTransfer ? (titleByAccountId.get(sourceIdOf(tx)) ?? acctTitle.get(d.outcomeAccount) ?? "source account") : null,
+            payee: isTransfer ? null : payee,
+            mcc: d.mcc,
+            op: d.opOutcome != null ? `${d.opOutcome.toFixed(2)} op` : null,
+            hold: tx.hold === true,
+            provider: providerOf(tx),
+          };
         });
 
         const counts: Record<SyncKind, number> = { expense: 0, income: 0, transfer: 0 };
@@ -245,36 +257,8 @@ export class SyncService {
           totals[m.kind] += m.amount;
         }
 
-        const deposits = syncedTxs
-          .filter((t) => t.type !== "CARD" && directionSign(t) === 1)
-          .sort((a, b) => (transactionDate(b)?.getTime() ?? 0) - (transactionDate(a)?.getTime() ?? 0))
-          .flatMap((t) => {
-            const at = transactionDate(t);
-            const sum = signedAmount(t);
-            if (at === null || sum === null) return [];
-            const src = transferSources.get(t.id);
-            const sig = t.onchainSignature ?? null;
-            return [
-              {
-                date: at.toISOString(),
-                amount: Math.abs(sum),
-                currency: t.settlementCurrency || cardCcy,
-                result: (src ? "transfer" : "income") as "transfer" | "income",
-                detail: src
-                  ? `→ ${acctTitle.get(src.accountId) ?? "source account"}`
-                  : sig
-                    ? "no matching account — kept as income"
-                    : "no on-chain signature — kept as income",
-                sig,
-              },
-            ];
-          });
-
-        // The sample of what was ACTUALLY sent this run (the delta). `mapped`,
-        // `diff.transactions`, and `txs` are all index-aligned (1:1 maps), so we
-        // pick the mapped rows whose diff id was in the push set.
         const pushedIds = new Set(toPush.transactions.map((t) => t.id));
-        const sentMapped = mapped.filter((_, i) => pushedIds.has(diff.transactions[i].id));
+        const sentMapped = mapped.filter((_, i) => pushedIds.has(diff.transactions[i]!.id));
 
         zenmoneyDetail = {
           pushed: true,
@@ -290,33 +274,56 @@ export class SyncService {
           counts,
           totals,
           sentSample: [...sentMapped].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 25),
-          deposits,
+          deposits: mapped
+            .filter((m) => m.kind === "income" || (m.kind === "transfer" && m.source != null))
+            .slice(0, 25)
+            .map((m) => ({
+              date: m.date,
+              amount: m.amount,
+              currency: m.currency,
+              result: (m.kind === "transfer" ? "transfer" : "income") as "transfer" | "income",
+              detail: m.source ? `→ ${m.source}` : "no matching account — kept as income",
+              sig: null,
+            })),
         };
       } else {
         zenmoneyDetail = { pushed: false, reason: this.config.dryRun ? "dry-run" : "no ZenMoney token" };
       }
 
-      this.lastDetail = { at: new Date().toISOString(), jupiter: jupiterDetail, zenmoney: zenmoneyDetail };
+      this.lastDetail = { at: new Date().toISOString(), sources, zenmoney: zenmoneyDetail };
       const sentCount = zenmoneyDetail.pushed ? zenmoneyDetail.pushedThisRun.transactions : 0;
-      this.state.lastResult = { accounts: scrape.accounts.length, transactions: scrape.transactions.length, sent: sentCount, pushed };
+      this.state.lastResult = {
+        accounts: scrape.accounts.length,
+        transactions: scrape.transactions.length,
+        sent: sentCount,
+        pushed,
+      };
       this.state.lastSyncOk = true;
       this.state.lastError = null;
       this.state.syncCount += 1;
-      const sent = zenmoneyDetail.pushed ? zenmoneyDetail.pushedThisRun : null;
-      this.log("info", `sync ok: ${scrape.transactions.length} tx in window, sent ${sent ? sent.transactions : 0} new/changed`);
+      this.log(
+        "info",
+        `sync ok (${ready.map((p) => p.label).join(" + ")}): ${scrape.transactions.length} tx in window, sent ${sentCount} new/changed`,
+      );
     } catch (e) {
       this.state.lastSyncOk = false;
       this.state.lastError = e instanceof Error ? e.message : String(e);
       this.log("error", `sync failed: ${this.state.lastError}`);
-      // if the Jupiter session died beyond refresh, surface it for re-auth
-      if (!this.jupiter?.isAuthenticated()) {
-        this.state.authenticated = false;
-        this.state.status = "needs-auth";
-      }
     } finally {
       this.running = false;
+      this.refreshProviderState();
       this.state.lastSyncAt = new Date().toISOString();
-      if (this.state.status === "syncing") this.state.status = this.state.lastSyncOk ? "idle" : "error";
+      // A session can die mid-run beyond what a refresh can fix; surface it for re-auth.
+      if (this.needsAuth()) this.state.status = "needs-auth";
+      else if (this.state.status === "syncing") this.state.status = this.state.lastSyncOk ? "idle" : "error";
     }
   }
+}
+
+/** The other leg of a two-movement transfer (earn → cash), if this is one. */
+function sourceIdOf(tx: ZenTransaction): string {
+  const second = tx.movements[1];
+  if (!second) return "";
+  const out = (tx.movements[0].sum ?? 0) < 0 ? tx.movements[0] : second;
+  return "id" in out.account ? out.account.id : "";
 }

@@ -1,19 +1,38 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { ServiceConfig } from "./config.js";
 import type { SyncService } from "./service.js";
+import type { ProviderId } from "./providers.js";
 import { controlPanelHtml } from "./webui.js";
 
 /**
  * Minimal HTTP control/status surface (no framework):
- *   GET  /health           liveness
- *   GET  /status           current service state
- *   POST /sync             trigger an immediate sync                 (protected)
- *   POST /auth/send-code   { email? } set email + send login OTP     (protected)
- *   POST /auth/verify      { code } complete login                   (protected)
+ *   GET  /health                       liveness
+ *   GET  /status                       current service state
+ *   POST /sync                         trigger an immediate sync              (protected)
+ *   POST /auth/<card>/send-code        { email? } set email + send OTP        (protected)
+ *   POST /auth/<card>/verify           { code } complete that card's login    (protected)
+ *   POST /auth/zenmoney                { token }                              (protected)
+ *
+ * `<card>` is a provider id: `jupiter` or `plasma`. Each card logs in separately — one
+ * card needing an OTP does not stop the other from syncing.
+ *
+ * `/auth/send-code` and `/auth/verify` remain as aliases for `jupiter`, so anything
+ * already pointed at them keeps working.
  *
  * Mutating routes require `Authorization: Bearer <SERVICE_TOKEN>` when a
  * serviceToken is configured.
  */
+/**
+ * `/auth/plasma/verify` → { provider: "plasma", action: "verify" }.
+ * `/auth/verify`        → { provider: "jupiter", … } — the pre-multi-card path, kept
+ * working rather than 404-ing whatever is already calling it.
+ * `/auth/zenmoney` is NOT an auth route in this sense; it is handled separately.
+ */
+function parseAuthRoute(path: string): { provider: ProviderId; action: "send-code" | "verify" } | null {
+  const m = /^\/auth\/(?:(jupiter|plasma)\/)?(send-code|verify)$/.exec(path);
+  return m ? { provider: (m[1] as ProviderId) ?? "jupiter", action: m[2] as "send-code" | "verify" } : null;
+}
+
 export function createControlServer(service: SyncService, config: ServiceConfig): Server {
   const authed = (req: IncomingMessage): boolean => {
     if (!config.serviceToken) return true;
@@ -64,22 +83,31 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
             void service.runSync();
             return json(res, 202, { accepted: true });
           }
-          if (path === "/auth/send-code") {
-            const body = (await readBody(req)) as { email?: string };
-            if (body.email != null) {
-              const email = String(body.email).trim();
-              if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: "invalid email" });
-              service.setJupiterEmail(email);
+          // /auth/<card>/send-code | /auth/<card>/verify, with the bare paths kept as
+          // Jupiter aliases so existing callers/scripts do not break.
+          const authRoute = parseAuthRoute(path);
+          if (authRoute) {
+            const { provider, action } = authRoute;
+            const state = service.getState().providers.find((p) => p.id === provider);
+            if (!state) return json(res, 404, { error: `unknown card "${provider}"` });
+
+            if (action === "send-code") {
+              const body = (await readBody(req)) as { email?: string };
+              if (body.email != null) {
+                const email = String(body.email).trim();
+                if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: "invalid email" });
+                service.setEmail(provider, email);
+              }
+              if (!service.getState().providers.find((p) => p.id === provider)?.email) {
+                return json(res, 400, { error: `no ${state.label} email set` });
+              }
+              await service.sendCode(provider);
+              return json(res, 200, { sent: true, provider });
             }
-            if (!service.getState().jupiterEmail) return json(res, 400, { error: "no Jupiter email set" });
-            await service.sendCode();
-            return json(res, 200, { sent: true });
-          }
-          if (path === "/auth/verify") {
             const body = (await readBody(req)) as { code?: string };
             if (!body.code) return json(res, 400, { error: "missing code" });
-            await service.verifyCode(String(body.code));
-            return json(res, 200, { authenticated: true });
+            await service.verifyCode(provider, String(body.code));
+            return json(res, 200, { authenticated: true, provider });
           }
           if (path === "/auth/zenmoney") {
             const body = (await readBody(req)) as { token?: string };

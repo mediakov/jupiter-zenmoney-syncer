@@ -10,6 +10,7 @@ import { dirname } from "node:path";
 export interface StoredCredentials {
   zenToken?: string;
   jupiterEmail?: string;
+  plasmaEmail?: string;
 }
 
 export class CredentialStore {
@@ -36,6 +37,15 @@ export class CredentialStore {
 
   get jupiterEmail(): string | undefined {
     return this.data.jupiterEmail;
+  }
+
+  get plasmaEmail(): string | undefined {
+    return this.data.plasmaEmail;
+  }
+
+  setPlasmaEmail(email: string): void {
+    this.data.plasmaEmail = email;
+    this.flush();
   }
 
   setJupiterEmail(email: string): void {

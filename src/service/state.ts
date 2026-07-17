@@ -1,12 +1,27 @@
+import type { ProviderDetail, ProviderId } from "./providers.js";
+
+/** Per-card connection state. Each card logs in on its own. */
+export interface ProviderState {
+  id: ProviderId;
+  label: string;
+  /** Account email in use (env, UI-provided, or null if unset). */
+  email: string | null;
+  /** A session is established for this card. */
+  authenticated: boolean;
+}
+
 /** Live, in-memory service state exposed via GET /status. */
 export interface ServiceState {
   startedAt: string;
-  /** Jupiter account email in use (env, UI-provided, or null if unset). */
-  jupiterEmail: string | null;
-  /** Jupiter session established. */
-  authenticated: boolean;
+  /**
+   * One entry per card. Replaces the old single `jupiterEmail`/`authenticated` pair:
+   * with two cards there is no one answer to "are we authenticated", and collapsing them
+   * would hide a card that needs a login behind one that does not.
+   */
+  providers: ProviderState[];
   /** ZenMoney token available (env or UI-provided). */
   zenConnected: boolean;
+  /** `needs-auth` means at least one CONFIGURED card has no session. */
   status: "starting" | "needs-auth" | "idle" | "syncing" | "error";
   lastSyncAt: string | null;
   lastSyncOk: boolean | null;
@@ -22,29 +37,12 @@ export type SyncKind = "expense" | "income" | "transfer";
 /** Detailed snapshot of the last sync — what we read and what we pushed. */
 export interface SyncDetail {
   at: string;
-  jupiter: {
-    // Nullable throughout: this mirrors what Jupiter actually returned, and the API
-    // does omit fields. Showing "—" is honest; inventing a 0 or "" is not.
-    cards: Array<{ last4: string | null; status: string | null }>;
-    balance: { currency: string | null; spendableBalance: number | null; withdrawableBalance: number | null } | null;
-    transactionCount: number;
-    /** A sample of the most recent transactions. */
-    transactions: Array<{
-      id: string;
-      date: string | null;
-      type: string | null;
-      direction: string | null;
-      amount: string | null;
-      currency: string | null;
-      merchant: string | null;
-    }>;
-    /**
-     * Transactions Jupiter sent that could not be represented (unknown direction,
-     * unreadable amount or date) and were therefore NOT synced. Surfaced rather than
-     * dropped quietly — a silent skip looks exactly like "there was nothing there".
-     */
-    skipped: Array<{ id: string; reason: string }>;
-  };
+  /**
+   * What each card returned this run — one entry per card that was read. Replaces the old
+   * `jupiter` block; the fields are nullable throughout because that mirrors what the APIs
+   * actually return. Showing "—" is honest; inventing a 0 or "" is not.
+   */
+  sources: ProviderDetail[];
   zenmoney:
     | {
         pushed: true;
@@ -72,6 +70,8 @@ export interface SyncDetail {
           /** Original-currency amount when the purchase was a conversion, e.g. "-42.00 EUR". */
           op: string | null;
           hold: boolean;
+          /** Which card it came from, so a merged feed stays readable. */
+          provider: ProviderId | null;
         }>;
         /** How every deposit was handled — the "deposit → transfer" reasoning. */
         deposits: Array<{
@@ -86,11 +86,10 @@ export interface SyncDetail {
     | { pushed: false; reason: string };
 }
 
-export function initialState(): ServiceState {
+export function initialState(providers: ProviderState[] = []): ServiceState {
   return {
     startedAt: new Date().toISOString(),
-    jupiterEmail: null,
-    authenticated: false,
+    providers,
     zenConnected: false,
     status: "starting",
     lastSyncAt: null,

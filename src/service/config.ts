@@ -2,10 +2,14 @@
 export interface ServiceConfig {
   /** Jupiter account email. Optional — can be provided later via the web UI/API. */
   jupiterEmail: string | null;
+  /** Plasma One account email. Optional; omit to run Jupiter-only. */
+  plasmaEmail: string | null;
   /** ZenMoney API token. Optional in dry-run mode (no push). */
   zenToken: string | null;
   /** Path to persist the Jupiter session (mount a volume in Docker). */
   sessionFile: string;
+  /** Path to persist the Plasma session. Separate file: separate login, separate tokens. */
+  plasmaSessionFile: string;
   /** Path to persist UI-provided credentials (ZenMoney token). */
   credFile: string;
   /** How often to sync, in ms. */
@@ -46,8 +50,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   // Compose's `${JUP_EMAIL:-}` when unset — is treated as absent, not as a real
   // value that would override the persisted credentials file.
 
-  // JUP_EMAIL is optional: it can be provided later via the web UI / API.
+  // Both emails are optional: either can be provided later via the web UI / API, and
+  // running one card without the other is a supported configuration.
   const jupiterEmail = env.JUP_EMAIL || null;
+  const plasmaEmail = env.PLASMA_EMAIL || null;
 
   const dryRun = env.DRY_RUN === "1" || env.DRY_RUN === "true";
   // ZEN_TOKEN is optional: it can be provided later via the web UI / API.
@@ -63,8 +69,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
 
   return {
     jupiterEmail,
+    plasmaEmail,
     zenToken,
     sessionFile: env.SESSION_FILE || "/data/.jup-session.json",
+    plasmaSessionFile: env.PLASMA_SESSION_FILE || "/data/.plasma-session.json",
     credFile: env.CRED_FILE || "/data/credentials.json",
     intervalMs: parseDuration(env.SYNC_INTERVAL, 6 * 3_600_000),
     years: years.length ? years : [now - 1, now],

@@ -61,15 +61,9 @@ export function controlPanelHtml(): string {
 </div>
 
 <div class="card">
-  <div class="row"><strong>Jupiter</strong> <span id="jup-pill" class="pill bad">checking…</span></div>
-  <div class="row">
-    <input id="jup-email" type="email" autocomplete="email" placeholder="Jupiter account email" />
-    <button id="btn-sendcode" onclick="sendCode(this)">1. Send code</button>
-  </div>
-  <div class="row">
-    <input id="jup-code" inputmode="numeric" placeholder="Paste the 6-digit code" />
-    <button id="btn-verify" onclick="verify(this)">2. Verify</button>
-  </div>
+  <!-- One login block per card, built from /status. The service decides which cards
+       exist, so adding another needs no change here. -->
+  <div id="logins"></div>
 </div>
 
 <div class="card">
@@ -93,7 +87,7 @@ export function controlPanelHtml(): string {
 </div>
 
 <div class="card">
-  <div class="row"><strong>⬇ Received from Jupiter</strong> <span id="jup-meta" class="muted"></span></div>
+  <div class="row"><strong>⬇ Received from your cards</strong> <span id="jup-meta" class="muted"></span></div>
   <div id="jup-data" class="muted">no sync yet</div>
 </div>
 
@@ -152,21 +146,48 @@ export function controlPanelHtml(): string {
     }
   }
 
-  async function sendCode(btn) {
-    const email = $("jup-email").value.trim();
-    if (!email) return toast("Enter your Jupiter email first.", "bad");
+  // Each card logs in on its own: its own email, its own OTP, its own session. One card
+  // needing a login never blocks the other from syncing.
+  function renderLogins(providers) {
+    const box = $("logins");
+    const want = (providers || []).map((p) => p.id).join(",");
+    if (box.dataset.built !== want) {
+      box.innerHTML = (providers || []).map((p) => \`
+        <div class="row" style="margin-top:.6rem"><strong>\${esc(p.label)}</strong> <span id="pill-\${p.id}" class="pill bad">checking…</span></div>
+        <div class="row">
+          <input id="email-\${p.id}" type="email" autocomplete="email" placeholder="\${esc(p.label)} account email" />
+          <button id="send-\${p.id}" onclick="sendCode(this,'\${p.id}')">1. Send code</button>
+        </div>
+        <div class="row">
+          <input id="code-\${p.id}" inputmode="numeric" placeholder="Paste the 6-digit code" />
+          <button id="verify-\${p.id}" onclick="verify(this,'\${p.id}')">2. Verify</button>
+        </div>\`).join("");
+      box.dataset.built = want;
+    }
+    for (const p of providers || []) {
+      const input = $("email-" + p.id);
+      if (p.email && document.activeElement !== input && !input.value) input.value = p.email;
+      setPill("pill-" + p.id, p.authenticated, "connected", p.email ? "needs login" : "set email");
+      const v = $("verify-" + p.id);
+      if (v && !v.dataset.busy) v.disabled = !!p.authenticated;
+    }
+  }
+
+  async function sendCode(btn, id) {
+    const email = $("email-" + id).value.trim();
+    if (!email) return toast("Enter the account email first.", "bad");
     await withBusy(btn, "Sending…", async () => {
-      const { ok, j } = await post("/auth/send-code", { email });
+      const { ok, j } = await post("/auth/" + id + "/send-code", { email });
       toast(ok ? "Code sent — check your email." : "Send failed: " + (j.error || "error"), ok ? "ok" : "bad");
       if (ok) await refresh();
     });
   }
-  async function verify(btn) {
-    const code = $("jup-code").value.trim();
+  async function verify(btn, id) {
+    const code = $("code-" + id).value.trim();
     if (!code) return toast("Enter the 6-digit code first.", "bad");
     await withBusy(btn, "Verifying…", async () => {
-      const { ok, j } = await post("/auth/verify", { code });
-      if (ok) { $("jup-code").value = ""; toast("Jupiter connected.", "ok"); await refresh(); }
+      const { ok, j } = await post("/auth/" + id + "/verify", { code });
+      if (ok) { $("code-" + id).value = ""; toast("Connected.", "ok"); await refresh(); }
       else toast("Verify failed: " + (j.error || "error"), "bad");
     });
   }
@@ -211,9 +232,8 @@ export function controlPanelHtml(): string {
     lastStatus = s;
     $("status").textContent = JSON.stringify(s, null, 2);
     $("status-sum").textContent = summarize(s);
-    // prefill the email once, but never clobber what the user is typing
-    if (s.jupiterEmail && document.activeElement !== $("jup-email") && !$("jup-email").value) $("jup-email").value = s.jupiterEmail;
-    setPill("jup-pill", s.authenticated, "connected", s.jupiterEmail ? "needs login" : "set email");
+    // One login block per card; prefills each email once, never clobbering what is typed.
+    renderLogins(s.providers);
     setPill("zen-pill", s.zenConnected, "connected", "no token");
     applyState();
     await refreshDetail();
@@ -234,15 +254,17 @@ export function controlPanelHtml(): string {
   function applyState() {
     const s = lastStatus || {};
     const syncing = s.status === "syncing";
-    const ready = !!(s.authenticated && s.zenConnected);
+    // ANY connected card is enough to sync — the others are simply skipped. Requiring all
+    // of them would let one card that needs an OTP block the one that is working fine.
+    const anyCard = (s.providers || []).some((p) => p.authenticated);
+    const ready = !!(anyCard && s.zenConnected);
     $("sync-ind").className = "pill info" + (syncing ? " on" : "");
     for (const id of ["btn-sync"]) {
       const b = $(id);
       if (!b || b.dataset.busy) continue;
       b.disabled = !ready || syncing;
-      b.title = !ready ? "Connect Jupiter and ZenMoney first" : (syncing ? "A sync is already in progress" : "");
+      b.title = !ready ? "Connect a card and ZenMoney first" : (syncing ? "A sync is already in progress" : "");
     }
-    const v = $("btn-verify"); if (v && !v.dataset.busy) v.disabled = !!s.authenticated;
   }
 
   function setPill(id, ok, okText, badText) { const e = $(id); e.textContent = ok ? okText : badText; e.className = "pill " + (ok ? "ok" : "bad"); }
@@ -261,35 +283,36 @@ export function controlPanelHtml(): string {
     if (d.at && d.at === lastRenderedAt) return;
     lastRenderedAt = d.at;
 
-    // ── Received from Jupiter ──
-    const j = d.jupiter;
-    // A balance Jupiter did not send is unknown, not 0.00 — Number(null) is 0, and a
-    // confidently wrong balance on screen is worse than an honest dash.
-    const bal =
-      j.balance && j.balance.spendableBalance !== null && j.balance.spendableBalance !== undefined
-        ? money(j.balance.spendableBalance) + " " + (j.balance.currency || "")
-        : "—";
+    // ── Received from each card ──
     $("jup-meta").textContent = "@ " + new Date(d.at).toLocaleString();
-    // Anything Jupiter omitted shows as "—". A field is only coloured as money in or
-    // out when the direction is one we actually recognise; an unknown direction is not
-    // quietly painted red, because we do not know that it was money leaving.
+    // Anything a card omitted shows as "—". A balance it did not send is unknown, not
+    // 0.00: Number(null) is 0, and a confidently wrong balance on screen is worse than an
+    // honest dash. Amounts are already signed, so the colour follows the sign — an
+    // unreadable amount is not quietly painted red, because we do not know it was money
+    // leaving.
     const dash = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
-    const dirClass = (dir) => (dir === "CREDIT" ? "pos" : dir === "DEBIT" ? "neg" : "");
-    const skipped = j.skipped || [];
+    const amtClass = (n) => (typeof n !== "number" ? "" : n < 0 ? "neg" : "pos");
 
-    $("jup-data").innerHTML =
-      '<div class="muted">cards: ' + j.cards.map((c) => "•" + esc(dash(c.last4)) + " (" + esc(dash(c.status)) + ")").join(", ") +
-      " · balance: " + esc(bal) + " · " + j.transactionCount + " transactions</div>" +
-      (skipped.length
-        ? '<div class="warn">⚠️ ' + skipped.length + " transaction(s) could not be read and were NOT synced: " +
-          esc(skipped.map((s) => s.id + " — " + s.reason).join("; ")) + "</div>"
+    $("jup-data").innerHTML = (d.sources || []).map((j) =>
+      '<div class="row" style="margin-top:.5rem"><strong>' + esc(j.label) + "</strong></div>" +
+      '<div class="muted">cards: ' +
+        (j.cards.length ? j.cards.map((c) => "•" + esc(dash(c.last4)) + " (" + esc(dash(c.status)) + ")").join(", ") : "—") +
+        " · " +
+        // Providers hold money in different pots — Jupiter one, Plasma cash+earn — so
+        // show whatever each reports rather than forcing them into one field.
+        j.balances.map((b) => esc(b.label) + ": " + (b.amount === null || b.amount === undefined ? "—" : esc(money(b.amount) + " " + b.currency))).join(" · ") +
+        " · " + j.transactionCount + " transactions</div>" +
+      ((j.skipped || []).length
+        ? '<div class="warn">⚠️ ' + j.skipped.length + " record(s) NOT synced: " +
+          esc(j.skipped.map((s) => s.id + " — " + s.reason).join("; ")) + "</div>"
         : "") +
-      rows("<tr><th>date</th><th>type</th><th>dir</th><th>amount</th><th>merchant</th></tr>" +
+      rows("<tr><th>date</th><th>type</th><th>amount</th><th>merchant</th></tr>" +
         j.transactions.map((t) =>
           "<tr><td>" + esc(t.date ? t.date.slice(0, 10) : "—") + "</td><td>" + esc((t.type || "").toLowerCase()) +
-          "</td><td>" + esc(dash(t.direction)) +
-          '</td><td class="num ' + dirClass(t.direction) + '">' + esc(dash(t.amount)) + " " + esc(dash(t.currency)) +
-          "</td><td>" + esc(t.merchant || "") + "</td></tr>").join(""));
+          '</td><td class="num ' + amtClass(t.amount) + '">' +
+            (typeof t.amount === "number" ? esc(money(t.amount)) : "—") + " " + esc(dash(t.currency)) +
+          "</td><td>" + esc(t.merchant || "") + "</td></tr>").join(""))
+    ).join("") || '<div class="muted">no cards connected</div>';
 
     // ── Pushed to ZenMoney ──
     const z = d.zenmoney;
@@ -346,9 +369,15 @@ export function controlPanelHtml(): string {
 
     $("zen-data").innerHTML = summary + depHtml + txHtml;
   }
-  // Enter submits the adjacent action.
-  $("jup-email").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCode($("btn-sendcode")); });
-  $("jup-code").addEventListener("keydown", (e) => { if (e.key === "Enter") verify($("btn-verify")); });
+  // Enter submits the adjacent action. The card inputs are built after /status returns,
+  // so this is delegated from a container that does exist at load — binding directly
+  // would throw on a page that has not fetched its providers yet.
+  $("logins").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const id = (e.target.id || "");
+    if (id.startsWith("email-")) sendCode($("send-" + id.slice(6)), id.slice(6));
+    else if (id.startsWith("code-")) verify($("verify-" + id.slice(5)), id.slice(5));
+  });
   $("zen-token").addEventListener("keydown", (e) => { if (e.key === "Enter") saveZen($("btn-savezen")); });
 
   // Remember the admin token so it's entered once. Safe here: same-origin,
