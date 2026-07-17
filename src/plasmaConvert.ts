@@ -48,6 +48,30 @@ export function accountIdFor(user: User): string | null {
   return typeof id === "string" && id !== "" ? id : null;
 }
 
+/**
+ * The two ZenMoney accounts one Plasma balance maps to.
+ *
+ * Plasma keeps two pots under one login — spendable `cash` and yield-bearing `earn` —
+ * and tags every transaction with the `balance_type` it hit. Modelling them as one
+ * account would make a move between them look like money appearing or vanishing.
+ *
+ * The earn id is derived from the card account address rather than invented, so it is
+ * as stable as the account itself.
+ */
+export interface PlasmaAccountIds {
+  cash: string;
+  earn: string;
+}
+
+export function accountIdsFor(user: User): PlasmaAccountIds | null {
+  const cash = accountIdFor(user);
+  return cash === null ? null : { cash, earn: `${cash}:earn` };
+}
+
+function money(amount: string | undefined, balance: Balance): number | null {
+  return parseMoney({ amount: amount ?? "", currency: "USD", decimals: balance.decimals ?? 6 });
+}
+
 export function toZenAccount(cards: Card[], balance: Balance, accountId: string): ZenAccount {
   const last4s = cards.map((c) => c.last_4).filter((x): x is string => x != null && x !== "");
   return {
@@ -56,12 +80,32 @@ export function toZenAccount(cards: Card[], balance: Balance, accountId: string)
     title: cards.length > 1 ? "Plasma One" : `Plasma •${last4s[0] ?? "card"}`,
     instrument: "USD",
     // `cash_balance` is the card's spendable money. It is NOT `total_balance`, which also
-    // includes `earn_balance`, and not `balance`, which was 0 while the card held funds.
+    // includes `earn_balance` (now its own account, so counting it here would double it),
+    // and not `balance`, which was 0 while the card held funds.
     // An unreadable balance is unknown, not zero — leave the field out rather than assert
     // a figure the API never gave us.
-    balance: parseMoney({ amount: balance.cash_balance ?? "", currency: "USD", decimals: balance.decimals ?? 6 }) ?? undefined,
+    balance: money(balance.cash_balance, balance) ?? undefined,
     syncIds: last4s.length ? last4s : null,
     savings: false,
+  };
+}
+
+/**
+ * The yield-bearing pot, as a savings-flagged `checking` account: its balance floats
+ * rather than being a fixed-term deposit, so `deposit` (which ZenMoney expects to carry
+ * a rate, capitalization and end date) would misdescribe it.
+ *
+ * Together with the card account this sums to Plasma's `total_balance`.
+ */
+export function toEarnAccount(balance: Balance, earnAccountId: string): ZenAccount {
+  return {
+    id: earnAccountId,
+    type: "checking",
+    title: "Plasma Earn",
+    instrument: "USD",
+    balance: money(balance.earn_balance, balance) ?? undefined,
+    syncIds: null,
+    savings: true,
   };
 }
 
@@ -69,10 +113,22 @@ export function toZenAccount(cards: Card[], balance: Balance, accountId: string)
 export type SkipReason = "declined" | "unreadable";
 
 /**
+ * Which of the two accounts a transaction belongs to.
+ *
+ * Plasma tags each row with the balance it moved, so this is read, not inferred. An
+ * absent or unrecognised value falls back to the card: every row observed so far is
+ * `cash`, and the card is where card activity lives. That fallback is an attribution
+ * guess, not an amount guess — the figure and date stay exact either way.
+ */
+export function accountIdForTx(tx: Transaction, accounts: PlasmaAccountIds): string {
+  return tx.balance_type === "earn" ? accounts.earn : accounts.cash;
+}
+
+/**
  * `null` when the transaction must not be booked — either it was declined (no money
  * moved) or it cannot be represented honestly (unreadable amount, currency, or date).
  */
-export function toZenTransaction(tx: Transaction, accountId: string): ZenTransaction | null {
+export function toZenTransaction(tx: Transaction, accounts: PlasmaAccountIds): ZenTransaction | null {
   if (tx.status === "declined") return null;
 
   const sum = usdAmount(tx);
@@ -105,7 +161,7 @@ export function toZenTransaction(tx: Transaction, accountId: string): ZenTransac
     hold: tx.status === "pending",
     merchant,
     comment: commentFor(tx),
-    movements: [{ id, account: { id: accountId }, invoice, sum, fee: 0 }],
+    movements: [{ id, account: { id: accountIdForTx(tx, accounts) }, invoice, sum, fee: 0 }],
   };
 }
 
@@ -151,8 +207,8 @@ export function toScrapeResult(
   balance: Balance,
   transactions: Transaction[],
 ): ConversionResult {
-  const accountId = accountIdFor(user);
-  if (accountId === null) {
+  const accounts = accountIdsFor(user);
+  if (accounts === null) {
     // Inventing an id here is what creates a permanent duplicate account downstream.
     throw new Error("Plasma returned a user without user_card_account_address; refusing to guess an account id");
   }
@@ -161,7 +217,7 @@ export function toScrapeResult(
   const skipped: SkippedTransaction[] = [];
 
   for (const tx of transactions) {
-    const zen = toZenTransaction(tx, accountId);
+    const zen = toZenTransaction(tx, accounts);
     if (zen === null) {
       skipped.push({ id: tx.id, reason: skipReasonFor(tx) });
       continue;
@@ -169,8 +225,17 @@ export function toScrapeResult(
     converted.push(zen);
   }
 
+  // Emit the earn account when its balance is readable — 0 is a real balance, and an
+  // account that stops being sent would sit in ZenMoney at a stale figure forever.
+  // Also emit it when any row was booked to it even if the balance is not readable:
+  // otherwise that movement points at an account absent from the diff, and orphans.
+  const hasEarnBalance = money(balance.earn_balance, balance) !== null;
+  const hasEarnRow = converted.some((t) => "id" in t.movements[0].account && t.movements[0].account.id === accounts.earn);
+  const zenAccounts = [toZenAccount(cards, balance, accounts.cash)];
+  if (hasEarnBalance || hasEarnRow) zenAccounts.push(toEarnAccount(balance, accounts.earn));
+
   return {
-    accounts: [toZenAccount(cards, balance, accountId)],
+    accounts: zenAccounts,
     transactions: converted,
     skipped,
   };
