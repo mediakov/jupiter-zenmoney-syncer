@@ -98,3 +98,44 @@ describe("scrapeToDiff", () => {
     expect(d.transactions[0]!.outcomeAccount).toBe(stableUuid("account:acct_1"));
   });
 });
+
+describe("two-movement transfer (plugin-native)", () => {
+  const ctx = { instruments: (c: string) => ({ USD: 1, EUR: 2 })[c], userId: 7 };
+  const transfer = {
+    id: "plasma:earn1",
+    date: new Date("2026-07-17T11:17:11Z"),
+    hold: false,
+    merchant: null,
+    comment: null,
+    movements: [
+      { id: "plasma:earn1", account: { id: "0xACCT" }, invoice: null, sum: -10, fee: 0 },
+      { id: "plasma:earn1:earn", account: { id: "0xACCT:earn" }, invoice: null, sum: 10, fee: 0 },
+    ],
+  } as const;
+
+  it("becomes one record with income and outcome on different accounts", () => {
+    const d = transactionToDiff(transfer as never, "USD", ctx as never);
+    expect(d.outcome).toBe(10);
+    expect(d.income).toBe(10);
+    expect(d.outcomeAccount).not.toBe(d.incomeAccount);
+    // Not an expense: a transfer has no payee.
+    expect(d.payee).toBeNull();
+  });
+
+  it("uses the transfer id namespace, so it never collides with a plain tx record", () => {
+    const d = transactionToDiff(transfer as never, "USD", ctx as never);
+    const asExpense = transactionToDiff(
+      { ...transfer, movements: [transfer.movements[0]] } as never,
+      "USD",
+      ctx as never,
+    );
+    expect(d.id).not.toBe(asExpense.id);
+  });
+
+  it("a single-movement expense is unchanged (Jupiter's path is untouched)", () => {
+    const d = transactionToDiff({ ...transfer, movements: [transfer.movements[0]] } as never, "USD", ctx as never);
+    expect(d.outcome).toBe(10);
+    expect(d.income).toBe(0);
+    expect(d.outcomeAccount).toBe(d.incomeAccount);
+  });
+});

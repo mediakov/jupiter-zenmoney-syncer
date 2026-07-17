@@ -110,8 +110,36 @@ describe("toZenTransaction", () => {
     expect(t!.movements[0].id).toBe("plasma:tx_1");
     expect(t!.movements[0].sum).toBe(-10);
     expect(t!.hold).toBe(false);
-    expect(t!.merchant).toEqual({ fullTitle: "Uber Eats", mcc: 5812, location: null });
+    expect(t!.merchant).toEqual({ fullTitle: "Uber Eats", mcc: 5812, city: null, country: null, location: null });
     expect(t!.comment).toBeNull();
+  });
+
+  it("passes through the merchant's city/country, the only place data Plasma sends", () => {
+    // Real shape: location is {address, city, country, formatted} — no lat/lng, which is
+    // what ZenMoney's `location` field means, so that stays null.
+    const t = toZenTransaction(
+      tx({
+        merchant: {
+          name: "Uber Eats",
+          mcc_code: "5812",
+          location: { address: "", city: "Amsterdam", country: "NL", formatted: "" },
+          category: { name: "Food Delivery", mcc: 5812 },
+        },
+      } as Partial<Transaction>),
+      ids,
+    );
+    expect(t!.merchant).toMatchObject({ city: "Amsterdam", country: "NL", location: null });
+  });
+
+  it("does not add fee_total on top of the amount — amount is already the full impact", () => {
+    // Proven by reconciliation: settled receives less the pending `amount`s equal
+    // cash_balance to the cent, with fee_total nowhere in it.
+    const t = toZenTransaction(
+      tx({ amount: usd("-63610000"), fee_total: { amount: "310000", currency: "USDT", decimals: 6 } } as Partial<Transaction>),
+      ids,
+    );
+    expect(t!.movements[0].sum).toBe(-63.61); // not -63.92
+    expect(t!.movements[0].fee).toBe(0);
   });
 
   it("NEVER books a declined transaction — no money moved", () => {
@@ -165,6 +193,43 @@ describe("toZenTransaction", () => {
     expect(toZenTransaction(tx({ timestamp: "not-a-date" }), ids)).toBeNull();
     // XPL is not USD-pegged: converting it at par would fabricate a dollar figure.
     expect(toZenTransaction(tx({ amount: { amount: "1000000000000000000", currency: "XPL", decimals: 18 } }), ids)).toBeNull();
+  });
+
+  describe("earn_deposit (cash → earn)", () => {
+    // The real captured row. Note what it does NOT say: no earn-side row exists, and
+    // balance_type is "cash". Taken literally it is a $10 expense.
+    const earnDeposit = tx({
+      id: "2d6554a9",
+      type: "earn_deposit",
+      balance_type: "cash",
+      source: "onchain",
+      amount: usd("-10000000", "USDT0"),
+      vault_address: "0x1cF1c71440eBd9Cc998Ce0B1B25CcEf275c53d77",
+    } as Partial<Transaction>);
+
+    it("books it as a transfer out of cash and into earn, not an expense", () => {
+      const t = toZenTransaction(earnDeposit, ids)!;
+      expect(t.movements).toHaveLength(2);
+      const [out, inn] = t.movements as [(typeof t.movements)[0], (typeof t.movements)[0]];
+      expect(out.sum).toBe(-10);
+      expect((out.account as { id: string }).id).toBe(ids.cash);
+      expect(inn.sum).toBe(10);
+      expect((inn.account as { id: string }).id).toBe(ids.earn);
+    });
+
+    it("nets to zero across the two accounts — the money did not leave Plasma", () => {
+      const t = toZenTransaction(earnDeposit, ids)!;
+      expect(t.movements.reduce((a, m) => a + (m.sum ?? 0), 0)).toBe(0);
+    });
+
+    it("emits the earn account even when the earn leg is only the second movement", () => {
+      const res = toScrapeResult(user, cards, { cash_balance: "1", decimals: 6 } as Balance, [earnDeposit]);
+      expect(res.accounts.map((a) => a.id)).toEqual(["0xCARDACCT", "0xCARDACCT:earn"]);
+    });
+
+    it("a plain cash purchase stays single-movement", () => {
+      expect(toZenTransaction(tx({}), ids)!.movements).toHaveLength(1);
+    });
   });
 
   describe("routing by balance_type", () => {

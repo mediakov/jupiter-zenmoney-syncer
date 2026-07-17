@@ -156,16 +156,36 @@ export function accountToDiff(a: ZenAccount, ctx: DiffContext): DiffAccount {
   };
 }
 
+/** The ZenMoney account id a movement points at. */
+function movementAccountId(m: ZenTransaction["movements"][number]): string {
+  return "id" in m.account ? stableUuid(`account:${m.account.id}`) : stableUuid(`ref:${m.account.syncIds.join(",")}`);
+}
+
 export function transactionToDiff(tx: ZenTransaction, accountInstrument: string, ctx: DiffContext): DiffTransaction {
   const m = tx.movements[0];
   const sum = m.sum ?? 0;
   // A deposit whose on-chain source matched an existing ZenMoney account.
   const source = sum > 0 ? ctx.transferSources?.get(tx.id ?? "") : undefined;
 
+  /**
+   * The plugin format's native transfer: one movement out of an account, one into
+   * another (e.g. Plasma's `earn_deposit`, which moves cash into the earn pot as a
+   * single API row). Both sides come from the record itself, so unlike `transferSources`
+   * there is nothing to resolve or match — the pair is already known.
+   */
+  const second = tx.movements[1];
+  const pair = second
+    ? (() => {
+        const out = sum < 0 ? m : second;
+        const inn = out === m ? second : m;
+        return { out, inn, outSum: Math.abs(out.sum ?? 0), inSum: Math.abs(inn.sum ?? 0) };
+      })()
+    : null;
+
   // `changed` is the transaction's own time (stable → app edits always win).
   const changed = Math.floor(tx.date.getTime() / 1000);
   const instrId = requireInstrument(accountInstrument, ctx.instruments);
-  const accId = "id" in m.account ? stableUuid(`account:${m.account.id}`) : stableUuid(`ref:${m.account.syncIds.join(",")}`);
+  const accId = movementAccountId(m);
   const payee = tx.merchant?.fullTitle ?? tx.merchant?.title ?? null;
 
   let opIncome: number | null = null;
@@ -188,22 +208,24 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
   // reusing the old `tx:` id (if the user deleted the income record) would never
   // resurrect — a distinct `transfer:` id sidesteps that entirely.
   const txKey = txKeyOf(tx);
+  const isTransfer = Boolean(source || pair);
   return {
-    id: stableUuid(`${source ? "transfer" : "tx"}:${txKey}`),
+    id: stableUuid(`${isTransfer ? "transfer" : "tx"}:${txKey}`),
     changed,
     created: changed,
     user: ctx.userId,
     deleted: false,
     date: ymd(tx.date),
-    income: sum > 0 ? sum : 0,
-    incomeAccount: accId,
+    income: pair ? pair.inSum : sum > 0 ? sum : 0,
+    incomeAccount: pair ? movementAccountId(pair.inn) : accId,
     incomeInstrument: instrId,
     incomeBankID: null,
-    outcome: source ? sum : sum < 0 ? -sum : 0,
-    outcomeAccount: source ? source.accountId : accId,
-    outcomeInstrument: source ? (source.instrument ?? instrId) : instrId,
+    outcome: pair ? pair.outSum : source ? sum : sum < 0 ? -sum : 0,
+    outcomeAccount: pair ? movementAccountId(pair.out) : source ? source.accountId : accId,
+    outcomeInstrument: pair ? instrId : source ? (source.instrument ?? instrId) : instrId,
     outcomeBankID: null,
-    payee: source ? null : payee,
+    // A transfer has no payee — the money went to your own account, not a merchant.
+    payee: isTransfer ? null : payee,
     originalPayee: payee,
     mcc: tx.merchant?.mcc ?? null,
     comment: tx.comment,

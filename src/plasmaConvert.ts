@@ -125,6 +125,23 @@ export function accountIdForTx(tx: Transaction, accounts: PlasmaAccountIds): str
 }
 
 /**
+ * Moving cash into the earn pot is ONE row, not two — confirmed against a real move:
+ *
+ *   { type: "earn_deposit", balance_type: "cash", amount: -10 USDT0, vault_address: "0x…" }
+ *
+ * Note what the row does NOT say: `balance_type` is `cash`, and there is no matching
+ * earn-side row. Taken at face value it books as a $10 expense and the earn account
+ * silently gains $10 with nothing explaining it — money apparently vanishing from the
+ * card. It is a transfer, so it is emitted as one: out of cash, into earn.
+ *
+ * The reverse (earn → cash) has NOT been observed, so its `type` is unknown and it is
+ * deliberately not guessed at; it would fall through and book against cash until seen.
+ */
+function isEarnTransfer(tx: Transaction): boolean {
+  return tx.type === "earn_deposit";
+}
+
+/**
  * `null` when the transaction must not be booked — either it was declined (no money
  * moved) or it cannot be represented honestly (unreadable amount, currency, or date).
  */
@@ -143,7 +160,17 @@ export function toZenTransaction(tx: Transaction, accounts: PlasmaAccountIds): Z
 
   let merchant: ZenMerchant | null = null;
   if (tx.merchant?.name) {
-    merchant = { fullTitle: tx.merchant.name, mcc: mccFor(tx), location: null };
+    // `location` here is a lat/lng pair, which Plasma does not send. It does send a
+    // city/country, which are their own fields — passing them through rather than
+    // dropping the only place data the API gives us.
+    const place = tx.merchant.location as { city?: string; country?: string } | undefined;
+    merchant = {
+      fullTitle: tx.merchant.name,
+      mcc: mccFor(tx),
+      city: place?.city || null,
+      country: place?.country || null,
+      location: null,
+    };
   }
 
   // Namespace the id by provider. Downstream, `stableUuid("tx:<id>")` turns this into
@@ -153,6 +180,11 @@ export function toZenTransaction(tx: Transaction, accounts: PlasmaAccountIds): Z
   // class of bug; Jupiter's own ids are deliberately left alone, since changing them
   // would re-insert its whole history as duplicates.
   const id = `plasma:${tx.id}`;
+  // `fee_total` (e.g. $0.31 on an FX purchase) is NOT added here. Reconciliation against
+  // the live balance proves `amount` is already the account's full impact: the settled
+  // receives less the pending `amount`s equal `cash_balance` to the cent. Adding the fee
+  // on top would overstate every FX purchase.
+  const cash = { id, account: { id: accountIdForTx(tx, accounts) }, invoice, sum, fee: 0 };
 
   return {
     id,
@@ -161,7 +193,10 @@ export function toZenTransaction(tx: Transaction, accounts: PlasmaAccountIds): Z
     hold: tx.status === "pending",
     merchant,
     comment: commentFor(tx),
-    movements: [{ id, account: { id: accountIdForTx(tx, accounts) }, invoice, sum, fee: 0 }],
+    movements: isEarnTransfer(tx)
+      ? // Both legs of the move, so it books as one transfer rather than an expense.
+        [cash, { id: `${id}:earn`, account: { id: accounts.earn }, invoice: null, sum: -sum, fee: 0 }]
+      : [cash],
   };
 }
 
@@ -230,7 +265,11 @@ export function toScrapeResult(
   // Also emit it when any row was booked to it even if the balance is not readable:
   // otherwise that movement points at an account absent from the diff, and orphans.
   const hasEarnBalance = money(balance.earn_balance, balance) !== null;
-  const hasEarnRow = converted.some((t) => "id" in t.movements[0].account && t.movements[0].account.id === accounts.earn);
+  // Check EVERY movement, not just the first: a cash→earn transfer carries earn on its
+  // second leg, and missing it would leave that leg pointing at an absent account.
+  const hasEarnRow = converted.some((t) =>
+    t.movements.some((m) => "id" in m.account && m.account.id === accounts.earn),
+  );
   const zenAccounts = [toZenAccount(cards, balance, accounts.cash)];
   if (hasEarnBalance || hasEarnRow) zenAccounts.push(toEarnAccount(balance, accounts.earn));
 

@@ -80,8 +80,11 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
   const { map, userId, serverTimestamp, accounts } = await zen.context();
 
   // Trace deposit sources on-chain; matched ones become transfers, rest income.
-  // Jupiter only: its deposits are Solana, and Plasma's on-chain receives carry no
-  // signature we have observed, so there is nothing to trace them by.
+  //
+  // Jupiter only, for now. Plasma's receives DO carry what this needs — `sender_address`,
+  // `tx_hash`, and a `chain` (one observed receive came from Solana) — and they arrive
+  // already resolved, so they would not even need the RPC lookup Jupiter does. Wiring
+  // that up is a separate change; today Plasma receives stay income.
   const solana = opts.solana ?? new SolanaResolver();
   const transferSources = jupiterTxs.length
     ? await resolveDepositSources(jupiterTxs, { solana, accounts, cache: opts.sigCache })
