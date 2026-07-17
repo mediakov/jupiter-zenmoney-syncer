@@ -1,14 +1,20 @@
 import { JupiterCard } from "jupiter-card-sdk";
-import { toScrapeResult } from "./convert.js";
+import { PlasmaCard } from "plasma-card-sdk";
+import { toScrapeResult, type ConversionResult } from "./convert.js";
+import { toScrapeResult as plasmaToScrapeResult } from "./plasmaConvert.js";
 import { scrapeToDiff } from "./toDiff.js";
 import { ZenMoneyClient } from "./zenClient.js";
 import { SolanaResolver } from "./solana.js";
 import { resolveDepositSources, SignatureCache } from "./transfers.js";
+import type { ScrapeResult } from "./zenTypes.js";
 
 export interface SyncOptions {
-  jupiter: JupiterCard;
+  /** Jupiter Card client. Optional — omit to sync only Plasma. */
+  jupiter?: JupiterCard;
+  /** Plasma One client. Optional — omit to sync only Jupiter. */
+  plasma?: PlasmaCard;
   zen: ZenMoneyClient;
-  /** Only sync transactions in this calendar year (default: current). */
+  /** Only sync Jupiter transactions in this calendar year (default: current). */
   year?: number;
   /** If true, don't push — just return what would be sent. */
   dryRun?: boolean;
@@ -22,40 +28,75 @@ export interface SyncSummary {
   accounts: number;
   transactions: number;
   pushed: boolean;
+  /** Records deliberately not booked (declines, unreadable rows), per provider. */
+  skipped: ConversionResult["skipped"];
 }
 
 /**
- * Read the Jupiter Card account + transactions, convert to ZenMoney, and push
- * via the diff API. Idempotent: re-running updates the same records (stable ids).
+ * Read the configured cards, convert to ZenMoney, and push via the diff API.
+ * Idempotent: re-running updates the same records (stable ids).
+ *
+ * Both cards feed one diff. Each contributes its own `ccard` account, and every
+ * transaction references its own account id, so the two never mix — but they are pushed
+ * together, in one call, against one `serverTimestamp`.
  */
 export async function sync(opts: SyncOptions): Promise<SyncSummary> {
-  const { jupiter, zen } = opts;
+  const { jupiter, plasma, zen } = opts;
+  if (!jupiter && !plasma) throw new Error("sync: configure at least one of `jupiter` or `plasma`");
   const year = opts.year ?? new Date().getUTCFullYear();
 
-  // 1. read from Jupiter
-  const [cards, balance, transactions] = await Promise.all([
-    jupiter.cards.list(),
-    jupiter.cards.balance(),
-    jupiter.transactions.all({ year }),
-  ]);
+  const scrapes: ConversionResult[] = [];
+  // Jupiter transactions, kept for on-chain source tracing below (Solana-only).
+  let jupiterTxs: Awaited<ReturnType<JupiterCard["transactions"]["all"]>> = [];
 
-  // 2. shared converter → ZenMoney plugin (movements) format
-  const scrape = toScrapeResult(cards, balance, transactions);
+  if (jupiter) {
+    const [cards, balance, transactions] = await Promise.all([
+      jupiter.cards.list(),
+      jupiter.cards.balance(),
+      jupiter.transactions.all({ year }),
+    ]);
+    jupiterTxs = transactions;
+    scrapes.push(toScrapeResult(cards, balance, transactions));
+  }
 
-  // 3. resolve instruments + user id + existing accounts
+  if (plasma) {
+    // `user` carries the card account address — the account identity the converter keys on.
+    const [user, cards, balance, transactions] = await Promise.all([
+      plasma.account.user(),
+      plasma.cards.list(),
+      plasma.account.balance(),
+      plasma.transactions.all({ includeDustReceives: true }),
+    ]);
+    scrapes.push(plasmaToScrapeResult(user, cards, balance, transactions));
+  }
+
+  const scrape: ScrapeResult = {
+    accounts: scrapes.flatMap((s) => s.accounts),
+    transactions: scrapes.flatMap((s) => s.transactions),
+  };
+  const skipped = scrapes.flatMap((s) => s.skipped);
+
+  // resolve instruments + user id + existing accounts
   const { map, userId, serverTimestamp, accounts } = await zen.context();
 
-  // trace deposit sources on-chain; matched ones become transfers, rest income
+  // Trace deposit sources on-chain; matched ones become transfers, rest income.
+  // Jupiter only: its deposits are Solana, and Plasma's on-chain receives carry no
+  // signature we have observed, so there is nothing to trace them by.
   const solana = opts.solana ?? new SolanaResolver();
-  const transferSources = await resolveDepositSources(transactions, { solana, accounts, cache: opts.sigCache });
+  const transferSources = jupiterTxs.length
+    ? await resolveDepositSources(jupiterTxs, { solana, accounts, cache: opts.sigCache })
+    : new Map();
 
-  // adapt movements → diff format
   const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
 
-  // 4. push (unless dry run)
   if (!opts.dryRun) {
     await zen.push(diff.accounts, diff.transactions, serverTimestamp, diff.deletions);
   }
 
-  return { accounts: diff.accounts.length, transactions: diff.transactions.length, pushed: !opts.dryRun };
+  return {
+    accounts: diff.accounts.length,
+    transactions: diff.transactions.length,
+    pushed: !opts.dryRun,
+    skipped,
+  };
 }
