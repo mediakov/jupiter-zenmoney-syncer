@@ -2,10 +2,11 @@ import { JupiterCard } from "jupiter-card-sdk";
 import { PlasmaCard } from "plasma-card-sdk";
 import { toScrapeResult, type ConversionResult } from "./convert.js";
 import { toScrapeResult as plasmaToScrapeResult } from "./plasmaConvert.js";
-import { scrapeToDiff } from "./toDiff.js";
+import { scrapeToDiff, type SourceAccount } from "./toDiff.js";
 import { ZenMoneyClient } from "./zenClient.js";
 import { SolanaResolver } from "./solana.js";
 import { resolveDepositSources, SignatureCache } from "./transfers.js";
+import { resolvePlasmaTransferSources } from "./plasmaTransfers.js";
 import type { ScrapeResult } from "./zenTypes.js";
 
 export interface SyncOptions {
@@ -46,8 +47,9 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
   const year = opts.year ?? new Date().getUTCFullYear();
 
   const scrapes: ConversionResult[] = [];
-  // Jupiter transactions, kept for on-chain source tracing below (Solana-only).
+  // Raw transactions, kept for on-chain source tracing below.
   let jupiterTxs: Awaited<ReturnType<JupiterCard["transactions"]["all"]>> = [];
+  let plasmaTxs: Awaited<ReturnType<PlasmaCard["transactions"]["all"]>> = [];
 
   if (jupiter) {
     const [cards, balance, transactions] = await Promise.all([
@@ -67,6 +69,7 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
       plasma.account.balance(),
       plasma.transactions.all({ includeDustReceives: true }),
     ]);
+    plasmaTxs = transactions;
     scrapes.push(plasmaToScrapeResult(user, cards, balance, transactions));
   }
 
@@ -79,16 +82,19 @@ export async function sync(opts: SyncOptions): Promise<SyncSummary> {
   // resolve instruments + user id + existing accounts
   const { map, userId, serverTimestamp, accounts } = await zen.context();
 
-  // Trace deposit sources on-chain; matched ones become transfers, rest income.
+  // Trace deposit sources; matched ones become transfers, the rest stay income.
   //
-  // Jupiter only, for now. Plasma's receives DO carry what this needs — `sender_address`,
-  // `tx_hash`, and a `chain` (one observed receive came from Solana) — and they arrive
-  // already resolved, so they would not even need the RPC lookup Jupiter does. Wiring
-  // that up is a separate change; today Plasma receives stay income.
+  // Both cards, by different routes to the same answer: Jupiter gives only a signature, so
+  // its source costs a Solana RPC lookup (async, cached); Plasma puts `sender_address` on
+  // the record, so its sources are free. One map either way — the keys are the ids the
+  // converters emitted, which are provider-namespaced and cannot collide.
   const solana = opts.solana ?? new SolanaResolver();
-  const transferSources = jupiterTxs.length
-    ? await resolveDepositSources(jupiterTxs, { solana, accounts, cache: opts.sigCache })
-    : new Map();
+  const transferSources = new Map<string, SourceAccount>([
+    ...(jupiterTxs.length
+      ? await resolveDepositSources(jupiterTxs, { solana, accounts, cache: opts.sigCache })
+      : []),
+    ...resolvePlasmaTransferSources(plasmaTxs, accounts),
+  ]);
 
   const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
 
