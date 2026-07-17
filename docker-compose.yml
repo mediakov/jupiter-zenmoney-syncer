@@ -10,8 +10,10 @@ services:
     cap_drop:
       - ALL
     environment:
-      # All optional — Jupiter email + ZenMoney token can also be set from the UI.
+      # All optional — every email and the ZenMoney token can also be set from the UI.
+      # Set either card, or both: an unconfigured card is simply skipped.
       JUP_EMAIL: ${JUP_EMAIL:-}
+      PLASMA_EMAIL: ${PLASMA_EMAIL:-}
       ZEN_TOKEN: ${ZEN_TOKEN:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-6h}
       SYNC_YEARS: ${SYNC_YEARS:-}

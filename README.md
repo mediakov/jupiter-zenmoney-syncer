@@ -11,7 +11,14 @@ Jupiter Card ──(jupiter-card-sdk)──▶ shared converter ──(movements
 ## Long-running service
 
 An always-on daemon that syncs on a schedule and exposes a small web UI + HTTP API.
-Both `JUP_EMAIL` and `ZEN_TOKEN` are optional at startup — you can connect
+Syncs the **Jupiter Card** and the **Plasma One** card into ZenMoney. Set either or
+both: each card has its own login, and a card you have not configured — or one whose
+session has expired — is skipped rather than blocking the other.
+
+`<card>` in the API is a provider id: `jupiter` or `plasma`. The bare `/auth/send-code`
+and `/auth/verify` still work as Jupiter aliases.
+
+All of `JUP_EMAIL`, `PLASMA_EMAIL` and `ZEN_TOKEN` are optional at startup — you can connect
 Jupiter and ZenMoney entirely from the UI instead.
 
 ```bash
@@ -47,8 +54,9 @@ long as it syncs at least once per window.
 
 **Or bootstrap via the API** (same thing, headless):
 ```bash
-curl -XPOST localhost:8080/auth/send-code -H 'content-type: application/json' -d '{"email":"you@example.com"}'
-curl -XPOST localhost:8080/auth/verify   -H 'content-type: application/json' -d '{"code":"123456"}'
+# each card logs in separately: <card> is `jupiter` or `plasma`
+curl -XPOST localhost:8080/auth/plasma/send-code -H 'content-type: application/json' -d '{"email":"you@example.com"}'
+curl -XPOST localhost:8080/auth/plasma/verify    -H 'content-type: application/json' -d '{"code":"123456"}'
 curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d '{"token":"ZEN_API_TOKEN"}'
 ```
 
@@ -60,8 +68,8 @@ curl -XPOST localhost:8080/auth/zenmoney -H 'content-type: application/json' -d 
 | GET | `/health` | liveness |
 | GET | `/status` | last sync result, timestamps, per-connection auth state |
 | POST | `/sync` | trigger an immediate sync |
-| POST | `/auth/send-code` | `{ "email"?: "…" }` set the Jupiter email (if given) and send the login OTP |
-| POST | `/auth/verify` | `{ "code": "…" }` complete Jupiter login |
+| POST | `/auth/<card>/send-code` | `{ "email"?: "…" }` set that card's email (if given) and send its login OTP |
+| POST | `/auth/<card>/verify` | `{ "code": "…" }` complete that card's login |
 | POST | `/auth/zenmoney` | `{ "token": "…" }` set the ZenMoney API token |
 
 `POST` routes require `Authorization: Bearer $SERVICE_TOKEN` when `SERVICE_TOKEN`
@@ -72,6 +80,8 @@ is set (the web UI has an "Admin token" box for it).
 | Var | Default | Notes |
 |---|---|---|
 | `JUP_EMAIL` | — | optional; can be set later via the UI/API |
+| `PLASMA_EMAIL` | — | optional; omit to run Jupiter-only |
+| `PLASMA_SESSION_FILE` | `/data/.plasma-session.json` | separate from Jupiter's: separate login, separate tokens |
 | `ZEN_TOKEN` | — | required unless `DRY_RUN=1`; can be set later via the UI/API |
 | `SYNC_INTERVAL` | `6h` | e.g. `30m`, `1d` |
 | `SYNC_YEARS` | current + previous year | e.g. `2025,2026` |
@@ -107,6 +117,9 @@ npm install         # links jupiter-card-sdk from ../jupiter-card-sdk
 
 You need two credentials:
 
+- **Plasma One** — your account email (`PLASMA_EMAIL`), if you want that card synced.
+  It contributes two ZenMoney accounts: the card itself and a savings-flagged
+  `Plasma Earn` for the yield balance.
 - **Jupiter** — your account email (`JUP_EMAIL`). First run asks for the emailed
   OTP; the session is saved to `.jup-session.json` and refreshed automatically.
 - **ZenMoney** — an API OAuth token (`ZEN_TOKEN`). Register a consumer and get a
