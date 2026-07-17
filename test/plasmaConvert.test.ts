@@ -234,6 +234,42 @@ describe("toZenTransaction", () => {
     it("a plain cash purchase stays single-movement", () => {
       expect(toZenTransaction(tx({}), ids)!.movements).toHaveLength(1);
     });
+
+    // The real captured mirror. Note the name: `earn_withdraw`, not `earn_withdrawal`.
+    const earnWithdraw = tx({
+      id: "080b7b00",
+      type: "earn_withdraw",
+      balance_type: "cash",
+      source: "onchain",
+      amount: usd("10000000", "USDT0"), // POSITIVE — money coming back to cash
+      vault_address: "0x1cF1c71440eBd9Cc998Ce0B1B25CcEf275c53d77",
+    } as Partial<Transaction>);
+
+    it("books earn_withdraw as a transfer back into cash, not as income", () => {
+      const t = toZenTransaction(earnWithdraw, ids)!;
+      expect(t.movements).toHaveLength(2);
+      const [cash, earn] = t.movements as [(typeof t.movements)[0], (typeof t.movements)[0]];
+      expect(cash.sum).toBe(10); // cash gains
+      expect((cash.account as { id: string }).id).toBe(ids.cash);
+      expect(earn.sum).toBe(-10); // earn gives it up
+      expect((earn.account as { id: string }).id).toBe(ids.earn);
+    });
+
+    it("the two directions are exact mirrors and both net to zero", () => {
+      const dep = toZenTransaction(earnDeposit, ids)!;
+      const wit = toZenTransaction(earnWithdraw, ids)!;
+      expect(dep.movements.reduce((a, m) => a + (m.sum ?? 0), 0)).toBe(0);
+      expect(wit.movements.reduce((a, m) => a + (m.sum ?? 0), 0)).toBe(0);
+      // Deposit takes from cash; withdraw gives back to cash.
+      expect(dep.movements[0].sum).toBe(-10);
+      expect(wit.movements[0].sum).toBe(10);
+    });
+
+    it("does not leave earn_withdraw looking like $10 of income", () => {
+      // The failure this replaces: a single +10 movement on the card account.
+      const t = toZenTransaction(earnWithdraw, ids)!;
+      expect(t.movements).not.toHaveLength(1);
+    });
   });
 
   describe("routing by balance_type", () => {

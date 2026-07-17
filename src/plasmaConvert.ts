@@ -125,20 +125,24 @@ export function accountIdForTx(tx: Transaction, accounts: PlasmaAccountIds): str
 }
 
 /**
- * Moving cash into the earn pot is ONE row, not two — confirmed against a real move:
+ * Moving money between the cash and earn pots is ONE row, not two. Both directions are
+ * now confirmed against real moves, and they are exact mirrors:
  *
- *   { type: "earn_deposit", balance_type: "cash", amount: -10 USDT0, vault_address: "0x…" }
+ *   { type: "earn_deposit",  balance_type: "cash", amount: -10 USDT0, vault_address: "0x…" }
+ *   { type: "earn_withdraw", balance_type: "cash", amount: +10 USDT0, vault_address: "0x…" }
  *
- * Note what the row does NOT say: `balance_type` is `cash`, and there is no matching
- * earn-side row. Taken at face value it books as a $10 expense and the earn account
- * silently gains $10 with nothing explaining it — money apparently vanishing from the
- * card. It is a transfer, so it is emitted as one: out of cash, into earn.
+ * Note what neither row says: `balance_type` is `cash` on BOTH, and there is never a
+ * matching earn-side row. Taken at face value the pair books as a $10 expense and $10 of
+ * income — money vanishing off the card, then appearing from nowhere, while the earn
+ * account moves with nothing to explain it. They are transfers, so they are emitted as
+ * transfers, and the sign already carries the direction: cash gets `amount`, earn gets
+ * its negation.
  *
- * The reverse (earn → cash) has NOT been observed, so its `type` is unknown and it is
- * deliberately not guessed at; it would fall through and book against cash until seen.
+ * The name is `earn_withdraw`, not the `earn_withdrawal` that would have been the natural
+ * guess — a good reason it was left unimplemented until a real one appeared.
  */
 function isEarnTransfer(tx: Transaction): boolean {
-  return tx.type === "earn_deposit";
+  return tx.type === "earn_deposit" || tx.type === "earn_withdraw";
 }
 
 /**
