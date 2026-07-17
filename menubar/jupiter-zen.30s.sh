@@ -2,10 +2,10 @@
 #
 # Jupiter ⇄ ZenMoney — SwiftBar menu-bar agent.
 #
-# <xbar.title>Jupiter to ZenMoney syncer</xbar.title>
-# <xbar.version>1.0.0</xbar.version>
+# <xbar.title>Cards to ZenMoney syncer</xbar.title>
+# <xbar.version>1.1.0</xbar.version>
 # <xbar.author>jupiter-zenmoney-syncer</xbar.author>
-# <xbar.desc>Menu-bar status + controls for the Jupiter to ZenMoney sync service (talks to its local HTTP API).</xbar.desc>
+# <xbar.desc>Menu-bar status + controls for the cards-to-ZenMoney sync service (talks to its local HTTP API).</xbar.desc>
 # <xbar.dependencies>curl</xbar.dependencies>
 #
 # <swiftbar.hideAbout>true</swiftbar.hideAbout>
@@ -32,11 +32,25 @@ auth_args=()
 # --- helpers ---------------------------------------------------------------
 
 # jget <json> <key>  → flat value (string/number/bool/null), unquoted, or empty
+#
+# Only ever use this on a FLAT object. `/status` now nests one object per card under
+# `providers`, and a key that appears inside them — `email`, `authenticated` — would match
+# whichever card comes first and be reported as if it were the whole service's. Pull the
+# card objects out with `providers_objs` and jget each one separately.
 jget() {
   printf '%s' "$1" \
     | grep -oE "\"$2\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[^,}[:space:]]+)" \
     | head -1 \
     | sed -E "s/^\"$2\"[[:space:]]*:[[:space:]]*//; s/^\"//; s/\"$//"
+}
+
+# providers_objs <json>  → one `{...}` per line, one per card.
+# The card objects have no nested braces, so a brace-to-brace match is exact here without
+# dragging in jq. If that ever stops being true, this is the line that breaks first.
+providers_objs() {
+  printf '%s' "$1" \
+    | grep -oE '"providers"[[:space:]]*:[[:space:]]*\[[^]]*\]' \
+    | grep -oE '\{[^}]*\}'
 }
 
 # fmt_time <iso-utc>  → local "6:32 PM" (or — when empty/null)
@@ -67,17 +81,24 @@ if [ -z "$STATUS" ]; then
 fi
 
 st=$(jget "$STATUS" status)
-authed=$(jget "$STATUS" authenticated)
 zen=$(jget "$STATUS" zenConnected)
-email=$(jget "$STATUS" jupiterEmail)
 lastOk=$(jget "$STATUS" lastSyncOk)
 lastAt=$(jget "$STATUS" lastSyncAt)
 nextAt=$(jget "$STATUS" nextSyncAt)
 txs=$(jget "$STATUS" transactions)   # window size (lastResult)
 sent=$(jget "$STATUS" sent)          # actually sent to ZenMoney last run (delta)
 err=$(jget "$STATUS" lastError)
-[ "$email" = "null" ] && email=""
 [ "$err" = "null" ] && err=""
+
+# One card per line. `anyAuthed` drives the icon: ANY connected card means the service can
+# sync, because an unconfigured or logged-out card is skipped rather than blocking the
+# rest — so a single card needing a login must not paint the whole thing red.
+CARDS=$(providers_objs "$STATUS")
+anyAuthed=false
+while IFS= read -r p; do
+  [ -z "$p" ] && continue
+  [ "$(jget "$p" authenticated)" = "true" ] && anyAuthed=true
+done <<< "$CARDS"
 
 # --- menu bar title (colored glyph reflects state) --------------------------
 # NOTE: SwiftBar renders menu-bar SF Symbols as monochrome template images and
@@ -88,7 +109,7 @@ case "$st" in
   needs-auth) icon="🟠" ;;
   error)      icon="🔴" ;;
   idle)
-    if [ "$authed" = "true" ] && [ "$zen" = "true" ]; then icon="🟢"; else icon="🟡"; fi ;;
+    if [ "$anyAuthed" = "true" ] && [ "$zen" = "true" ]; then icon="🟢"; else icon="🟡"; fi ;;
   *)          icon="⚪️" ;;
 esac
 echo "$icon Zen"
@@ -103,8 +124,21 @@ okMark=""
 [ "$lastOk" = "true" ] && okMark=" ✓"; [ "$lastOk" = "false" ] && okMark=" ✕"
 echo "Status: $st$okMark | color=$statusColor"
 
-[ "$authed" = "true" ] && jd="● connected" jc=green || jd="○ needs login" jc=red
-echo "Jupiter: ${email:-not set}  $jd | color=$jc"
+# One line per card, straight from /status — a card added to the service shows up here
+# with no change to this plugin.
+while IFS= read -r p; do
+  [ -z "$p" ] && continue
+  label=$(jget "$p" label)
+  pemail=$(jget "$p" email)
+  pauth=$(jget "$p" authenticated)
+  [ "$pemail" = "null" ] && pemail=""
+  if [ "$pauth" = "true" ]; then pd="● connected"; pc=green
+  elif [ -n "$pemail" ]; then pd="○ needs login"; pc=red
+  else pd="○ not set"; pc=gray            # no email: not configured, not broken
+  fi
+  echo "$label: ${pemail:-—}  $pd | color=$pc"
+done <<< "$CARDS"
+
 [ "$zen" = "true" ] && zd="● connected" zc=green || zd="○ no token" zc=red
 echo "ZenMoney: $zd | color=$zc"
 
@@ -132,12 +166,22 @@ syncLine="$syncLine param$i=$BASE/sync"
 
 echo "Open control panel | href=$BASE"
 
-# Prompt to finish login when needed (OTP is entered in the web panel)
-if [ "$authed" != "true" ]; then
-  echo "---"
-  echo "⚠ Connect Jupiter → open panel | href=$BASE color=orange"
-fi
+# Prompt to finish login when needed (the OTP is entered in the web panel). Only for a
+# card that HAS an email: one with none was never configured, so nagging about it would be
+# noise for anyone running a single card.
+sep=""
+while IFS= read -r p; do
+  [ -z "$p" ] && continue
+  pemail=$(jget "$p" email)
+  [ "$pemail" = "null" ] && pemail=""
+  [ -z "$pemail" ] && continue
+  if [ "$(jget "$p" authenticated)" != "true" ]; then
+    [ -z "$sep" ] && { echo "---"; sep=1; }
+    echo "⚠ Connect $(jget "$p" label) → open panel | href=$BASE color=orange"
+  fi
+done <<< "$CARDS"
 if [ "$zen" != "true" ]; then
+  [ -z "$sep" ] && { echo "---"; sep=1; }
   echo "⚠ Connect ZenMoney → open panel | href=$BASE color=orange"
 fi
 

@@ -4,11 +4,17 @@ A tiny macOS menu-bar tray for the syncer. It's a pure HTTP client — it just
 talks to the running service's API (`/status`, `/sync`), so it needs no Node and
 doesn't care whether the service runs in OrbStack/Docker or via `npm run serve`.
 
+One line per card, read from the service's `/status` — a card added there appears here
+with no change to the plugin. A card you have not configured shows a neutral "not set"
+rather than nagging you to connect it, and the glyph goes green when ANY card is
+connected, because a logged-out card is skipped rather than blocking the others.
+
 ```
 🟢 Zen                     ← "Zen" + a colored status glyph
 ─────────────────────────
 Status: idle ✓
 Jupiter: you@example.com  ● connected
+Plasma One: you@example.com  ● connected
 ZenMoney: ● connected
 Last sync: 6:32 PM · 22 tx
 Next sync: 11:32 PM
