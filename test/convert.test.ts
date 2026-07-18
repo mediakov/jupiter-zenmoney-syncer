@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { accountIdFor, toZenAccount, toZenTransaction, toScrapeResult } from "../src/convert.js";
+import { accountIdFor, toZenAccount, toZenTransaction, toScrapeResult, unbookableReason } from "../src/convert.js";
 import type { Card, CardBalance, Transaction } from "jupiter-card-sdk";
 
 const cards: Card[] = [
@@ -38,7 +38,7 @@ function tx(overrides: Partial<Transaction>): Transaction {
       merchantName: "COFFEE SHOP",
       merchantLogoUrl: "",
       merchantCategoryCode: "5814",
-      status: "SETTLED",
+      status: "COMPLETED", // the real settled value (was a made-up "SETTLED")
       settlementTimestamp: "2026-07-01T12:01:00.000Z",
       fees: {
         localAmount: "10.00",
@@ -166,5 +166,50 @@ describe("toScrapeResult", () => {
   it("refuses to sync at all rather than invent an account id", () => {
     const noAcct = [{ ...cards[0]!, cardAccountId: null }];
     expect(() => toScrapeResult(noAcct, balance, [tx({})])).toThrow(/cardAccountId/);
+  });
+});
+
+describe("declined card transactions", () => {
+  it("does NOT book a card decline — INSUFFICIENT_FUNDS moved no money", () => {
+    // The real status from the live API. A decline carries a full amount and a valid date,
+    // so nothing but card.status distinguishes it from a real purchase.
+    const declined = tx({ id: "dead", card: { ...tx({}).card!, status: "INSUFFICIENT_FUNDS", settlementTimestamp: null } });
+    expect(toZenTransaction(declined, "acct_1")).toBeNull();
+    expect(unbookableReason(declined)).toBe("card insufficient_funds — no money moved");
+  });
+
+  it("books COMPLETED (settled) and AUTHORIZED (a hold)", () => {
+    expect(toZenTransaction(tx({}), "acct_1")).not.toBeNull(); // COMPLETED from the fixture
+    const held = tx({ card: { ...tx({}).card!, status: "AUTHORIZED", settlementTimestamp: null } });
+    const z = toZenTransaction(held, "acct_1");
+    expect(z).not.toBeNull();
+    expect(z!.hold).toBe(true);
+  });
+
+  it("skips any UNSEEN card status rather than booking it on a guess (allowlist)", () => {
+    for (const s of ["REVERSED", "EXPIRED", "DO_NOT_HONOR", "DECLINED"]) {
+      expect(toZenTransaction(tx({ card: { ...tx({}).card!, status: s } }), "acct_1")).toBeNull();
+    }
+  });
+
+  it("leaves on-chain deposits/withdrawals alone — they have no card.status", () => {
+    const deposit = tx({ type: "DEPOSIT", direction: "CREDIT", settlementAmount: "500.00", onchainSignature: "5xSig", card: null });
+    expect(unbookableReason(deposit)).toBeNull();
+    expect(toZenTransaction(deposit, "acct_1")).not.toBeNull();
+  });
+
+  it("books a card row with no status at all — old records lack the field", () => {
+    const noStatus = tx({ card: { ...tx({}).card!, status: null } });
+    expect(unbookableReason(noStatus)).toBeNull();
+    expect(toZenTransaction(noStatus, "acct_1")).not.toBeNull();
+  });
+
+  it("reports the decline in the skipped list with its reason", () => {
+    const res = toScrapeResult(cards, balance, [
+      tx({ id: "ok" }),
+      tx({ id: "dead", card: { ...tx({}).card!, status: "INSUFFICIENT_FUNDS" } }),
+    ]);
+    expect(res.transactions.map((t) => t.id)).toEqual(["ok"]);
+    expect(res.skipped).toEqual([{ id: "dead", reason: "card insufficient_funds — no money moved" }]);
   });
 });

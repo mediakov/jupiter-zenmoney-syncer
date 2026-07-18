@@ -53,12 +53,40 @@ export function toZenAccount(cards: Card[], balance: CardBalance, accountId: str
 }
 
 /**
- * `null` when the transaction cannot be represented honestly — an unknown direction,
- * an unparseable amount, or a bad timestamp. Booking one of those would put a wrong
- * number in the ledger: the old code turned a malformed amount into `0` and treated
- * every non-`CREDIT` direction as money leaving the account.
+ * Card-purchase statuses that mean money actually moved (or is committed as a hold).
+ *
+ * `COMPLETED` is settled; `AUTHORIZED` is a pending hold that will settle. Anything else on
+ * a card row — `INSUFFICIENT_FUNDS` and every other decline — is money that never left the
+ * account, and must not become an expense. Observed live; kept as an ALLOWLIST on purpose,
+ * so a status we have not seen is skipped and surfaced rather than booked on a guess.
+ */
+const BOOKABLE_CARD_STATUS = new Set(["COMPLETED", "AUTHORIZED"]);
+
+/**
+ * Why a card transaction must not be booked, or null if it may be. Declines carry a full
+ * amount and a valid date — nothing about the number itself says the charge was refused —
+ * so the only signal is `card.status`, which the SDK leaves untyped.
+ *
+ * Only CARD rows have a status; on-chain deposits/withdrawals have none and always moved
+ * money. A CARD row with no status at all keeps the prior behaviour (booked): the field is
+ * absent on some older records, and we do not want to start dropping history.
+ */
+export function unbookableReason(tx: Transaction): string | null {
+  if (tx.type !== "CARD") return null;
+  const status = tx.card?.status;
+  if (status == null || status === "") return null;
+  if (BOOKABLE_CARD_STATUS.has(status.toUpperCase())) return null;
+  return `card ${status.toLowerCase()} — no money moved`;
+}
+
+/**
+ * `null` when the transaction cannot be represented honestly — a declined card charge, an
+ * unknown direction, an unparseable amount, or a bad timestamp. Booking one of those would
+ * put a wrong number in the ledger: the old code turned a malformed amount into `0`, treated
+ * every non-`CREDIT` direction as money leaving the account, and booked declines as expenses.
  */
 export function toZenTransaction(tx: Transaction, accountId: string): ZenTransaction | null {
+  if (unbookableReason(tx) !== null) return null;
   const sum = signedAmount(tx);
   const date = transactionDate(tx);
   if (sum === null || date === null) return null;
@@ -114,12 +142,14 @@ export function toScrapeResult(cards: Card[], balance: CardBalance, transactions
   for (const tx of transactions) {
     const zen = toZenTransaction(tx, accountId);
     if (zen === null) {
+      const declined = unbookableReason(tx);
       skipped.push({
         id: tx.id,
         reason:
-          signedAmount(tx) === null
+          declined ??
+          (signedAmount(tx) === null
             ? `unreadable amount or direction (direction=${tx.direction ?? "—"}, amount=${tx.settlementAmount ?? "—"})`
-            : `unreadable timestamp (${tx.transactionTimestamp ?? "—"})`,
+            : `unreadable timestamp (${tx.transactionTimestamp ?? "—"})`),
       });
       continue;
     }
