@@ -126,6 +126,19 @@ function requireInstrument(code: string, instruments: InstrumentMap): number {
   return id;
 }
 
+/**
+ * The FX (invoice) currency, or null when ZenMoney has no instrument for it.
+ *
+ * Unlike the account currency — where an unknown code is genuinely unbookable and should
+ * fail loudly — the invoice is only an *annotation* of the original-currency leg. A single
+ * transaction in an unmapped currency must not abort the whole push (the way USDC did):
+ * drop the annotation, keep the transaction in the account currency. Returns null so the
+ * caller omits the op fields.
+ */
+function optionalInstrument(code: string, instruments: InstrumentMap): number | null {
+  return instruments(code) ?? null;
+}
+
 export function accountToDiff(a: ZenAccount, ctx: DiffContext): DiffAccount {
   return {
     id: stableUuid(`account:${a.id}`),
@@ -194,8 +207,9 @@ export function transactionToDiff(tx: ZenTransaction, accountInstrument: string,
   let opIncomeInstrument: number | null = null;
   let opOutcome: number | null = null;
   let opOutcomeInstrument: number | null = null;
-  if (m.invoice) {
-    const opInstr = requireInstrument(m.invoice.instrument, ctx.instruments);
+  // A currency ZenMoney doesn't have drops the FX annotation rather than failing the push.
+  const opInstr = m.invoice ? optionalInstrument(m.invoice.instrument, ctx.instruments) : null;
+  if (m.invoice && opInstr != null) {
     if (m.invoice.sum > 0) {
       opIncome = m.invoice.sum;
       opIncomeInstrument = opInstr;

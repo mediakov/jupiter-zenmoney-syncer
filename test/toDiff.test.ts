@@ -139,3 +139,29 @@ describe("two-movement transfer (plugin-native)", () => {
     expect(d.outcomeAccount).toBe(d.incomeAccount);
   });
 });
+
+describe("unknown FX currency degrades gracefully (never aborts the push)", () => {
+  const ctx = { instruments: (c: string) => ({ USD: 1, EUR: 2 })[c], userId: 7 };
+  const withInvoice = (instrument: string) => ({
+    id: "plasma:x", date: new Date("2026-07-18T00:00:00Z"), hold: false, merchant: null, comment: null,
+    movements: [{ id: "plasma:x", account: { id: "acct" }, invoice: { sum: -17, instrument }, sum: -19.71, fee: 0 }],
+  }) as never;
+
+  it("keeps a known FX invoice (EUR)", () => {
+    const d = transactionToDiff(withInvoice("EUR"), "USD", ctx as never);
+    expect(d.opOutcome).toBe(17);
+    expect(d.opOutcomeInstrument).toBe(2);
+  });
+
+  it("drops an UNKNOWN FX invoice but still books the transaction", () => {
+    // The USDC-class failure: an unmapped currency must not throw and kill the whole push.
+    const d = transactionToDiff(withInvoice("ZZZ"), "USD", ctx as never);
+    expect(d.opOutcome).toBeNull();
+    expect(d.opOutcomeInstrument).toBeNull();
+    expect(d.outcome).toBe(19.71); // the transaction itself is intact, in the account currency
+  });
+
+  it("still throws for an unknown ACCOUNT currency — that one is genuinely unbookable", () => {
+    expect(() => transactionToDiff(withInvoice("EUR"), "ZZZ", ctx as never)).toThrow(/Unknown ZenMoney instrument/);
+  });
+});
