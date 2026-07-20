@@ -38,16 +38,25 @@ export function accountIdFor(cards: Card[]): string | null {
 }
 
 /**
- * Normalise a currency for ZenMoney, which has no `USDC` instrument.
- *
- * Jupiter's API returns mixed case (`usdc` and `USDC`) and settles the card in USD, with USDC
- * as its 1:1 on-chain rail. Folding USDC into USD (and upper-casing) keeps a USDC deposit from
- * producing an invoice in an instrument ZenMoney cannot resolve — which otherwise fails the
- * whole diff push, not just that record. A genuine FX leg like EUR is only upper-cased.
+ * USD-pegged stablecoins, folded into USD. ONLY 1:1 dollar stablecoins belong here — each is a
+ * dollar by design, so booking it as USD is exact. Real fiat (EUR, GBP…) is deliberately absent
+ * (EUR is not a dollar, and ZenMoney supports it), as is volatile crypto (BTC, ETH, SOL, XPL…),
+ * which has a price rather than a peg. Kept in sync with the jupitercard plugin's set.
+ */
+const USD_STABLECOINS = new Set([
+  "USDC", "USDT", "USDT0", "PYUSD", "DAI", "USDP", "TUSD", "FDUSD", "USDE", "USDS", "USDG", "GUSD", "BUSD", "USDD",
+]);
+
+/**
+ * Normalise a currency for ZenMoney, which lacks instruments for most stablecoins (USDC above
+ * all). Jupiter returns mixed case (`usdc`/`USDC`) and settles on dollar stablecoin rails, so
+ * upper-casing + folding those into USD keeps a stablecoin leg from producing an invoice in an
+ * instrument ZenMoney cannot resolve — which otherwise fails the whole diff push. A genuine FX
+ * leg like EUR is only upper-cased.
  */
 export function normalizeCurrency(code: string | null | undefined): string {
   const c = (typeof code === "string" ? code : "").toUpperCase();
-  return c === "USDC" ? "USD" : c;
+  return USD_STABLECOINS.has(c) ? "USD" : c;
 }
 
 export function toZenAccount(cards: Card[], balance: CardBalance, accountId: string): ZenAccount {

@@ -215,10 +215,14 @@ describe("declined card transactions", () => {
 });
 
 describe("currency normalisation (ZenMoney has no USDC)", () => {
-  it("normalizeCurrency folds USDC→USD and upper-cases", () => {
-    expect(normalizeCurrency("USDC")).toBe("USD");
-    expect(normalizeCurrency("usdc")).toBe("USD");
+  it("normalizeCurrency folds USD stablecoins into USD and upper-cases", () => {
+    for (const sc of ["USDC", "usdc", "USDT", "USDT0", "PYUSD", "DAI", "FDUSD"]) {
+      expect(normalizeCurrency(sc)).toBe("USD");
+    }
+    // Real fiat and volatile crypto keep their own code — they are NOT dollars.
     expect(normalizeCurrency("eur")).toBe("EUR");
+    expect(normalizeCurrency("BTC")).toBe("BTC");
+    expect(normalizeCurrency("SOL")).toBe("SOL");
     expect(normalizeCurrency(null)).toBe("");
   });
 
