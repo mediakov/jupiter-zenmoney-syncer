@@ -45,6 +45,16 @@ describe("loadConfig", () => {
     expect(loadConfig({ JUP_EMAIL: "j@x.com" }).plasmaEmail).toBeNull();
   });
 
+  it("enabledProviders defaults to both, and SYNC_PROVIDERS narrows it", () => {
+    expect(loadConfig({}).enabledProviders).toEqual(["jupiter", "plasma"]);
+    expect(loadConfig({ SYNC_PROVIDERS: "plasma" }).enabledProviders).toEqual(["plasma"]);
+    expect(loadConfig({ SYNC_PROVIDERS: "jupiter" }).enabledProviders).toEqual(["jupiter"]);
+    // Case-insensitive, tolerant of spaces, and unknown ids are dropped.
+    expect(loadConfig({ SYNC_PROVIDERS: " Plasma , nonsense " }).enabledProviders).toEqual(["plasma"]);
+    // An all-garbage value falls back to both rather than disabling everything.
+    expect(loadConfig({ SYNC_PROVIDERS: "nope" }).enabledProviders).toEqual(["jupiter", "plasma"]);
+  });
+
   it("parses years and interval", () => {
     const c = loadConfig({ JUP_EMAIL: "a@b.c", ZEN_TOKEN: "t", SYNC_YEARS: "2025, 2026", SYNC_INTERVAL: "12h" } as any);
     expect(c.years).toEqual([2025, 2026]);
@@ -61,8 +71,8 @@ describe("control server", () => {
   const fakeService = {
     getState: () => ({
       ...initialState([
-        { id: "jupiter", label: "Jupiter", email: emails.jupiter, authenticated: false },
-        { id: "plasma", label: "Plasma One", email: emails.plasma, authenticated: false },
+        { id: "jupiter", label: "Jupiter", email: emails.jupiter, authenticated: false, enabled: true },
+        { id: "plasma", label: "Plasma One", email: emails.plasma, authenticated: false, enabled: true },
       ]),
       status: "idle",
     }),
@@ -74,6 +84,7 @@ describe("control server", () => {
       calls.push("email:" + id + ":" + email);
     },
     setZenToken: (token: string) => void calls.push("zen:" + token),
+    setEnabled: (id: string, enabled: boolean) => void calls.push("enabled:" + id + ":" + enabled),
     getLastDetail: () => null,
   } as unknown as SyncService;
   const config = { serviceToken: "secret" } as ServiceConfig;
@@ -173,6 +184,18 @@ describe("control server", () => {
     });
     expect(ok.status).toBe(200);
     expect(calls).toContain("zen:zen_abc");
+  });
+
+  it("POST /providers/<card>/enabled toggles that card, needs a boolean, and is guarded", async () => {
+    const hdr = { authorization: "Bearer secret", "content-type": "application/json" };
+    expect((await fetch(base + "/providers/plasma/enabled", { method: "POST", body: JSON.stringify({ enabled: false }) })).status).toBe(401);
+    const missing = await fetch(base + "/providers/plasma/enabled", { method: "POST", headers: hdr, body: "{}" });
+    expect(missing.status).toBe(400); // enabled must be a boolean, not absent or a string
+    const bad = await fetch(base + "/providers/nope/enabled", { method: "POST", headers: hdr, body: JSON.stringify({ enabled: false }) });
+    expect(bad.status).toBe(404);
+    const ok = await fetch(base + "/providers/jupiter/enabled", { method: "POST", headers: hdr, body: JSON.stringify({ enabled: false }) });
+    expect(ok.status).toBe(200);
+    expect(calls).toContain("enabled:jupiter:false");
   });
 
   it("GET /last-sync is guarded and returns empty when no sync yet", async () => {

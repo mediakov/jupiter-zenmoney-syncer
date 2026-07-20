@@ -153,24 +153,48 @@ export function controlPanelHtml(): string {
     const want = (providers || []).map((p) => p.id).join(",");
     if (box.dataset.built !== want) {
       box.innerHTML = (providers || []).map((p) => \`
-        <div class="row" style="margin-top:.6rem"><strong>\${esc(p.label)}</strong> <span id="pill-\${p.id}" class="pill bad">checking…</span></div>
-        <div class="row">
-          <input id="email-\${p.id}" type="email" autocomplete="email" placeholder="\${esc(p.label)} account email" />
-          <button id="send-\${p.id}" onclick="sendCode(this,'\${p.id}')">1. Send code</button>
+        <div class="row" style="margin-top:.6rem">
+          <strong>\${esc(p.label)}</strong>
+          <span id="pill-\${p.id}" class="pill bad">checking…</span>
+          <button id="toggle-\${p.id}" class="secondary" onclick="toggleProvider(this,'\${p.id}')" style="margin-left:auto">…</button>
         </div>
-        <div class="row">
-          <input id="code-\${p.id}" inputmode="numeric" placeholder="Paste the 6-digit code" />
-          <button id="verify-\${p.id}" onclick="verify(this,'\${p.id}')">2. Verify</button>
+        <div id="auth-\${p.id}">
+          <div class="row">
+            <input id="email-\${p.id}" type="email" autocomplete="email" placeholder="\${esc(p.label)} account email" />
+            <button id="send-\${p.id}" onclick="sendCode(this,'\${p.id}')">1. Send code</button>
+          </div>
+          <div class="row">
+            <input id="code-\${p.id}" inputmode="numeric" placeholder="Paste the 6-digit code" />
+            <button id="verify-\${p.id}" onclick="verify(this,'\${p.id}')">2. Verify</button>
+          </div>
         </div>\`).join("");
       box.dataset.built = want;
     }
     for (const p of providers || []) {
       const input = $("email-" + p.id);
       if (p.email && document.activeElement !== input && !input.value) input.value = p.email;
-      setPill("pill-" + p.id, p.authenticated, "connected", p.email ? "needs login" : "set email");
+      // A disabled card is dimmed and labelled — its login controls stay usable so you can
+      // still connect it, but it is clearly not syncing until switched back on.
+      const off = p.enabled === false;
+      setPill("pill-" + p.id, p.authenticated, off ? "off · connected" : "connected", p.email ? "needs login" : "set email");
+      if (off) { const e = $("pill-" + p.id); e.textContent = p.authenticated ? "disabled" : "disabled · " + (p.email ? "needs login" : "no email"); e.className = "pill"; }
+      const auth = $("auth-" + p.id); if (auth) auth.style.opacity = off ? ".5" : "1";
+      const t = $("toggle-" + p.id);
+      if (t && !t.dataset.busy) { t.textContent = off ? "Enable" : "Disable"; t.className = "secondary" + (off ? " ok" : ""); }
       const v = $("verify-" + p.id);
       if (v && !v.dataset.busy) v.disabled = !!p.authenticated;
     }
+  }
+
+  // Switch a card's syncing on or off. Persisted server-side; takes effect next sync.
+  async function toggleProvider(btn, id) {
+    const s = (lastStatus?.providers || []).find((p) => p.id === id);
+    const next = !(s?.enabled !== false); // currently on -> turn off, and vice versa
+    await withBusy(btn, "…", async () => {
+      const { ok, j } = await post("/providers/" + id + "/enabled", { enabled: next });
+      toast(ok ? (id + " sync " + (next ? "enabled" : "disabled")) : "Failed: " + (j.error || "error"), ok ? "ok" : "bad");
+      if (ok) await refresh();
+    });
   }
 
   async function sendCode(btn, id) {
@@ -254,9 +278,9 @@ export function controlPanelHtml(): string {
   function applyState() {
     const s = lastStatus || {};
     const syncing = s.status === "syncing";
-    // ANY connected card is enough to sync — the others are simply skipped. Requiring all
-    // of them would let one card that needs an OTP block the one that is working fine.
-    const anyCard = (s.providers || []).some((p) => p.authenticated);
+    // Any ENABLED, connected card is enough to sync — disabled or logged-out cards are just
+    // skipped. Requiring all of them would let one card that needs an OTP block a working one.
+    const anyCard = (s.providers || []).some((p) => p.authenticated && p.enabled !== false);
     const ready = !!(anyCard && s.zenConnected);
     $("sync-ind").className = "pill info" + (syncing ? " on" : "");
     for (const id of ["btn-sync"]) {

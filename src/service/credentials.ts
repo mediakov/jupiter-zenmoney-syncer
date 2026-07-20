@@ -1,16 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { ProviderId } from "./providers.js";
 
 /**
- * Persists UI-provided credentials (the ZenMoney API token and the Jupiter
- * account email) so they survive restarts — the same idea as the Jupiter session
- * file. Treat the file like a secret; it's created 0600 and belongs on the
- * mounted /data volume.
+ * Persists UI-provided settings (the ZenMoney token, each card's email, and whether a card
+ * is enabled) so they survive restarts — the same idea as the session files. Treat the file
+ * like a secret; it's created 0600 and belongs on the mounted /data volume.
  */
 export interface StoredCredentials {
   zenToken?: string;
   jupiterEmail?: string;
   plasmaEmail?: string;
+  /**
+   * Per-card on/off, set from the UI. Absent means "not chosen from the UI" — the service
+   * then falls back to the SYNC_PROVIDERS default. Once toggled, this value is authoritative
+   * and survives restarts, which is the whole point of a UI switch.
+   */
+  providerEnabled?: Partial<Record<ProviderId, boolean>>;
 }
 
 export class CredentialStore {
@@ -50,6 +56,16 @@ export class CredentialStore {
 
   setJupiterEmail(email: string): void {
     this.data.jupiterEmail = email;
+    this.flush();
+  }
+
+  /** UI on/off for a card, or undefined when the UI has never set it. */
+  providerEnabled(id: ProviderId): boolean | undefined {
+    return this.data.providerEnabled?.[id];
+  }
+
+  setProviderEnabled(id: ProviderId, enabled: boolean): void {
+    this.data.providerEnabled = { ...this.data.providerEnabled, [id]: enabled };
     this.flush();
   }
 

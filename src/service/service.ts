@@ -40,7 +40,9 @@ export class SyncService {
     private readonly log: Logger = () => {},
   ) {
     this.creds = new CredentialStore(config.credFile);
-    // Env takes precedence, else a previously UI-provided email.
+    // Both cards are always constructed, so a DISABLED one keeps its session and can be
+    // switched back on from the UI without a fresh OTP. Whether a card actually syncs is a
+    // separate, runtime `enabled` flag — see isEnabled/setEnabled.
     this.providers = [
       new JupiterProvider(config.jupiterEmail ?? this.creds.jupiterEmail ?? null, config.sessionFile),
       new PlasmaProvider(config.plasmaEmail ?? this.creds.plasmaEmail ?? null, config.plasmaSessionFile),
@@ -61,17 +63,39 @@ export class SyncService {
       label: p.label,
       email: p.email,
       authenticated: p.isAuthenticated(),
+      enabled: this.isEnabled(p.id),
     }));
   }
 
-  /** The cards that are configured AND logged in — the ones a sync can actually read. */
-  private ready(): CardProvider[] {
-    return this.providers.filter((p) => isConfigured(p) && p.isAuthenticated());
+  /**
+   * Whether a card is switched on for syncing. The UI toggle (persisted in the credentials
+   * file) is authoritative once used; before that, the SYNC_PROVIDERS env default applies;
+   * with neither set, a card is on.
+   */
+  private isEnabled(id: ProviderId): boolean {
+    return this.creds.providerEnabled(id) ?? this.config.enabledProviders.includes(id);
   }
 
-  /** True when a card has an email but no session: a human needs to enter an OTP. */
+  /** The cards that are enabled, configured, AND logged in — the ones a sync can read. */
+  private ready(): CardProvider[] {
+    return this.providers.filter((p) => this.isEnabled(p.id) && isConfigured(p) && p.isAuthenticated());
+  }
+
+  /**
+   * True when an ENABLED card has an email but no session: a human needs to enter an OTP.
+   * A disabled card that is logged out does not count — it is not trying to sync.
+   */
   private needsAuth(): boolean {
-    return this.providers.some((p) => isConfigured(p) && !p.isAuthenticated());
+    return this.providers.some((p) => this.isEnabled(p.id) && isConfigured(p) && !p.isAuthenticated());
+  }
+
+  /** Turn a card's syncing on or off (from the UI). Persisted; takes effect next sync. */
+  setEnabled(id: ProviderId, enabled: boolean): void {
+    this.provider(id); // validate the id
+    this.creds.setProviderEnabled(id, enabled);
+    this.refreshProviderState();
+    this.state.status = this.needsAuth() ? "needs-auth" : this.state.status === "needs-auth" ? "idle" : this.state.status;
+    this.log("info", `${id} sync ${enabled ? "enabled" : "disabled"}`);
   }
 
   private provider(id: string): CardProvider {

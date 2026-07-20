@@ -1,5 +1,14 @@
+import type { ProviderId } from "./providers.js";
+
 /** Service configuration, parsed from environment variables. */
 export interface ServiceConfig {
+  /**
+   * Which cards this service is allowed to run. An explicit enable-list, because disabling a
+   * card by clearing its email does not stick — a previously UI-provided email persisted in
+   * the credentials file would silently re-enable it on the next start. A card left out here
+   * is not constructed at all: no login, no sync, no auth route.
+   */
+  enabledProviders: ProviderId[];
   /** Jupiter account email. Optional — can be provided later via the web UI/API. */
   jupiterEmail: string | null;
   /** Plasma One account email. Optional; omit to run Jupiter-only. */
@@ -67,7 +76,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     ? env.SYNC_YEARS.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
     : [now - 1, now];
 
+  // SYNC_PROVIDERS is a comma list of card ids to run, e.g. "plasma" to run Plasma only.
+  // Unset → both, so existing deployments are unchanged. An unknown id is ignored rather
+  // than crashing the service.
+  const ALL: ProviderId[] = ["jupiter", "plasma"];
+  const enabledProviders = env.SYNC_PROVIDERS
+    ? (env.SYNC_PROVIDERS.split(",").map((s) => s.trim().toLowerCase()).filter((s) => ALL.includes(s as ProviderId)) as ProviderId[])
+    : ALL;
+
   return {
+    enabledProviders: enabledProviders.length ? enabledProviders : ALL,
     jupiterEmail,
     plasmaEmail,
     zenToken,

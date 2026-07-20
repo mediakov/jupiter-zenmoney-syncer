@@ -12,6 +12,7 @@ import { controlPanelHtml } from "./webui.js";
  *   POST /auth/<card>/send-code        { email? } set email + send OTP        (protected)
  *   POST /auth/<card>/verify           { code } complete that card's login    (protected)
  *   POST /auth/zenmoney                { token }                              (protected)
+ *   POST /providers/<card>/enabled     { enabled } switch a card's sync on/off (protected)
  *
  * `<card>` is a provider id: `jupiter` or `plasma`. Each card logs in separately — one
  * card needing an OTP does not stop the other from syncing.
@@ -76,12 +77,25 @@ export function createControlServer(service: SyncService, config: ServiceConfig)
         }
 
         // ── mutating routes below ──
-        if (method === "POST" && (path === "/sync" || path.startsWith("/auth/"))) {
+        if (method === "POST" && (path === "/sync" || path.startsWith("/auth/") || path.startsWith("/providers/"))) {
           if (!authed(req)) return json(res, 401, { error: "unauthorized" });
 
           if (path === "/sync") {
             void service.runSync();
             return json(res, 202, { accepted: true });
+          }
+
+          // POST /providers/<card>/enabled  { enabled: bool } — switch a card's sync on/off.
+          const toggle = /^\/providers\/(jupiter|plasma)\/enabled$/.exec(path);
+          if (toggle) {
+            const provider = toggle[1] as ProviderId;
+            if (!service.getState().providers.find((p) => p.id === provider)) {
+              return json(res, 404, { error: `unknown card "${provider}"` });
+            }
+            const body = (await readBody(req)) as { enabled?: unknown };
+            if (typeof body.enabled !== "boolean") return json(res, 400, { error: "missing boolean `enabled`" });
+            service.setEnabled(provider, body.enabled);
+            return json(res, 200, { provider, enabled: body.enabled });
           }
           // /auth/<card>/send-code | /auth/<card>/verify, with the bare paths kept as
           // Jupiter aliases so existing callers/scripts do not break.

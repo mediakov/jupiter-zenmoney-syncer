@@ -14,6 +14,8 @@ services:
       # Set either card, or both: an unconfigured card is simply skipped.
       JUP_EMAIL: ${JUP_EMAIL:-}
       PLASMA_EMAIL: ${PLASMA_EMAIL:-}
+      # Comma list of cards to run, e.g. "plasma" for Plasma-only. Unset = both.
+      SYNC_PROVIDERS: ${SYNC_PROVIDERS:-}
       ZEN_TOKEN: ${ZEN_TOKEN:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-6h}
       SYNC_YEARS: ${SYNC_YEARS:-}

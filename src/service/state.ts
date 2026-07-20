@@ -8,6 +8,8 @@ export interface ProviderState {
   email: string | null;
   /** A session is established for this card. */
   authenticated: boolean;
+  /** Whether this card is switched on for syncing (UI toggle). A disabled card is skipped. */
+  enabled: boolean;
 }
 
 /** Live, in-memory service state exposed via GET /status. */
