@@ -37,13 +37,26 @@ export function accountIdFor(cards: Card[]): string | null {
   return id != null && id !== "" ? id : null;
 }
 
+/**
+ * Normalise a currency for ZenMoney, which has no `USDC` instrument.
+ *
+ * Jupiter's API returns mixed case (`usdc` and `USDC`) and settles the card in USD, with USDC
+ * as its 1:1 on-chain rail. Folding USDC into USD (and upper-casing) keeps a USDC deposit from
+ * producing an invoice in an instrument ZenMoney cannot resolve — which otherwise fails the
+ * whole diff push, not just that record. A genuine FX leg like EUR is only upper-cased.
+ */
+export function normalizeCurrency(code: string | null | undefined): string {
+  const c = (typeof code === "string" ? code : "").toUpperCase();
+  return c === "USDC" ? "USD" : c;
+}
+
 export function toZenAccount(cards: Card[], balance: CardBalance, accountId: string): ZenAccount {
   const last4s = cards.map((c) => c.last4).filter((x): x is string => x != null && x !== "");
   return {
     id: accountId,
     type: "ccard",
     title: cards.length > 1 ? "Jupiter Card" : `Jupiter •${last4s[0] ?? "card"}`,
-    instrument: balance.currency || "USD",
+    instrument: normalizeCurrency(balance.currency) || "USD",
     // An absent balance is unknown, not zero — leave the field out entirely rather
     // than assert a figure the API never gave us.
     balance: parseMoney(balance.spendableBalance) ?? undefined,
@@ -91,8 +104,15 @@ export function toZenTransaction(tx: Transaction, accountId: string): ZenTransac
   const date = transactionDate(tx);
   if (sum === null || date === null) return null;
 
+  // Record the original-currency leg only when it truly differs from the settlement currency
+  // after normalisation: a USDC deposit settled in USD is 1:1, so it collapses to no invoice
+  // rather than one in the unbookable `USDC` instrument.
   const original = signedOriginalAmount(tx);
-  const invoice = original === null ? null : { sum: original.sum, instrument: original.currency };
+  const originalCurrency = original === null ? null : normalizeCurrency(original.currency);
+  const invoice =
+    original === null || originalCurrency === normalizeCurrency(tx.settlementCurrency)
+      ? null
+      : { sum: original.sum, instrument: originalCurrency! };
 
   let merchant: ZenMerchant | null = null;
   if (tx.card?.merchantName) {

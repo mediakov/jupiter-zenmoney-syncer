@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { accountIdFor, toZenAccount, toZenTransaction, toScrapeResult, unbookableReason } from "../src/convert.js";
+import { accountIdFor, toZenAccount, toZenTransaction, toScrapeResult, unbookableReason, normalizeCurrency } from "../src/convert.js";
 import type { Card, CardBalance, Transaction } from "jupiter-card-sdk";
 
 const cards: Card[] = [
@@ -211,5 +211,31 @@ describe("declined card transactions", () => {
     ]);
     expect(res.transactions.map((t) => t.id)).toEqual(["ok"]);
     expect(res.skipped).toEqual([{ id: "dead", reason: "card insufficient_funds — no money moved" }]);
+  });
+});
+
+describe("currency normalisation (ZenMoney has no USDC)", () => {
+  it("normalizeCurrency folds USDC→USD and upper-cases", () => {
+    expect(normalizeCurrency("USDC")).toBe("USD");
+    expect(normalizeCurrency("usdc")).toBe("USD");
+    expect(normalizeCurrency("eur")).toBe("EUR");
+    expect(normalizeCurrency(null)).toBe("");
+  });
+
+  it("a USDC deposit emits no USDC invoice (it is 1:1 USD)", () => {
+    // The real crash shape: settlement USD, original USDC, same amount.
+    const dep = tx({
+      type: "DEPOSIT", direction: "CREDIT", card: null, onchainSignature: "sig",
+      settlementCurrency: "USD", settlementAmount: "29.40",
+      transactionCurrency: "USDC", transactionAmount: "29.40",
+    });
+    const z = toZenTransaction(dep, "acct")!;
+    expect(z.movements[0].invoice).toBeNull();
+    expect(z.movements[0].sum).toBe(29.4);
+    expect(JSON.stringify(z)).not.toMatch(/USDC/i);
+  });
+
+  it("the account instrument is never an unbookable USDC", () => {
+    expect(toZenAccount(cards, { ...balance, currency: "USDC" } as CardBalance, "a").instrument).toBe("USD");
   });
 });
