@@ -1,4 +1,5 @@
 import {
+  isDeclined,
   isHold,
   parseMoney,
   signedAmount,
@@ -75,30 +76,17 @@ export function toZenAccount(cards: Card[], balance: CardBalance, accountId: str
 }
 
 /**
- * Card-purchase statuses that mean money actually moved (or is committed as a hold).
+ * Why a card transaction must not be booked, or null if it may be.
  *
- * `COMPLETED` is settled; `AUTHORIZED` is a pending hold that will settle. Anything else on
- * a card row — `INSUFFICIENT_FUNDS` and every other decline — is money that never left the
- * account, and must not become an expense. Observed live; kept as an ALLOWLIST on purpose,
- * so a status we have not seen is skipped and surfaced rather than booked on a guess.
- */
-const BOOKABLE_CARD_STATUS = new Set(["COMPLETED", "AUTHORIZED"]);
-
-/**
- * Why a card transaction must not be booked, or null if it may be. Declines carry a full
- * amount and a valid date — nothing about the number itself says the charge was refused —
- * so the only signal is `card.status`, which the SDK leaves untyped.
- *
- * Only CARD rows have a status; on-chain deposits/withdrawals have none and always moved
- * money. A CARD row with no status at all keeps the prior behaviour (booked): the field is
- * absent on some older records, and we do not want to start dropping history.
+ * The decision is the SDK's `isDeclined` — a single source of truth, shared with the plugin —
+ * rather than a second copy of the allowlist here. A decline carries a full amount and a valid
+ * date, so `card.status` is the only signal; this function adds the human reason for the
+ * skipped-records report.
  */
 export function unbookableReason(tx: Transaction): string | null {
-  if (tx.type !== "CARD") return null;
+  if (!isDeclined(tx)) return null;
   const status = tx.card?.status;
-  if (status == null || status === "") return null;
-  if (BOOKABLE_CARD_STATUS.has(status.toUpperCase())) return null;
-  return `card ${status.toLowerCase()} — no money moved`;
+  return `card ${(status ?? "declined").toLowerCase()} — no money moved`;
 }
 
 /**

@@ -20,7 +20,7 @@
     "serve:prod": "node dist/service/main.js"
   },
   "dependencies": {
-    "jupiter-card-sdk": "^0.2.0",
+    "jupiter-card-sdk": "^0.3.0",
     "plasma-card-sdk": "^0.2.0"
   },
   "devDependencies": {
