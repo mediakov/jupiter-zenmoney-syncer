@@ -228,15 +228,23 @@ export class SyncService {
         }
 
         const diff = scrapeToDiff(scrape, { instruments: map, userId, transferSources });
+        // A hold we pushed before that has vanished from the source (a re-authorised or
+        // settled-under-new-id charge) is deleted, so it doesn't linger as a duplicate.
+        const currentTxIds = new Set(diff.transactions.map((t) => t.id));
+        const staleHoldDeletions = this.ledger.staleHoldDeletions(currentTxIds, userId, Math.floor(Date.now() / 1000));
+        const deletions = [...diff.deletions, ...staleHoldDeletions];
+        if (staleHoldDeletions.length > 0) {
+          this.log("info", `retiring ${staleHoldDeletions.length} stale hold(s) no longer on the card`);
+        }
         // Only send what's new or changed since our last successful push.
-        const toPush = this.ledger.pending(diff.accounts, diff.transactions, diff.deletions);
+        const toPush = this.ledger.pending(diff.accounts, diff.transactions, deletions);
         const hasNew = toPush.accounts.length > 0 || toPush.transactions.length > 0 || toPush.deletions.length > 0;
         let resp: Awaited<ReturnType<ZenMoneyClient["push"]>> | null = null;
         if (hasNew) {
           resp = await this.zen.push(toPush.accounts, toPush.transactions, serverTimestamp, toPush.deletions);
           this.ledger.record(toPush);
         }
-        this.ledger.retain(diff.accounts, diff.transactions, diff.deletions);
+        this.ledger.retain(diff.accounts, diff.transactions, deletions);
         pushed = true;
 
         // 3. reconstruct how each record was classified, in human terms.
