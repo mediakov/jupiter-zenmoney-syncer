@@ -1,7 +1,7 @@
 /**
  * Self-contained HTML control panel served at GET /. No external assets.
  * Shows connection status and provides the human bootstrap for each:
- *   - Jupiter: send code → paste code
+ *   - each card: send code → paste code
  *   - ZenMoney: paste API token
  * If SERVICE_TOKEN is set, enter it once in the "Admin token" box; it's sent as
  * a Bearer header on the POST actions.
@@ -12,7 +12,7 @@ export function controlPanelHtml(): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Jupiter → ZenMoney syncer</title>
+<title>Cards → ZenMoney syncer</title>
 <style>
   :root { color-scheme: light dark; }
   body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
@@ -52,7 +52,7 @@ export function controlPanelHtml(): string {
 </style>
 </head>
 <body>
-<h1>Jupiter → ZenMoney syncer</h1>
+<h1>Cards → ZenMoney syncer</h1>
 <p class="muted">Connect both sides, then it syncs automatically.</p>
 
 <div class="card">
@@ -181,8 +181,6 @@ export function controlPanelHtml(): string {
       const auth = $("auth-" + p.id); if (auth) auth.style.opacity = off ? ".5" : "1";
       const t = $("toggle-" + p.id);
       if (t && !t.dataset.busy) { t.textContent = off ? "Enable" : "Disable"; t.className = "secondary" + (off ? " ok" : ""); }
-      const v = $("verify-" + p.id);
-      if (v && !v.dataset.busy) v.disabled = !!p.authenticated;
     }
   }
 
@@ -322,7 +320,7 @@ export function controlPanelHtml(): string {
       '<div class="muted">cards: ' +
         (j.cards.length ? j.cards.map((c) => "•" + esc(dash(c.last4)) + " (" + esc(dash(c.status)) + ")").join(", ") : "—") +
         " · " +
-        // Providers hold money in different pots — Jupiter one, Plasma cash+earn — so
+        // Providers hold money in different pots (e.g. one balance, or cash+earn) — so
         // show whatever each reports rather than forcing them into one field.
         j.balances.map((b) => esc(b.label) + ": " + (b.amount === null || b.amount === undefined ? "—" : esc(money(b.amount) + " " + b.currency))).join(" · ") +
         " · " + j.transactionCount + " transactions</div>" +

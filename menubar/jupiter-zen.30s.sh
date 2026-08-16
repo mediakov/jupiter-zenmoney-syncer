@@ -25,6 +25,23 @@ TOKEN="${JUPZEN_TOKEN:-}"
 COMPOSE_DIR="${JUPZEN_COMPOSE_DIR:-}"
 CURL=/usr/bin/curl
 
+# --- optional second section: Donatty local stand ---------------------------
+# Its logic lives in the donatty-stand project, so this panel stays a thin host:
+# nothing here needs to change when that stand does. Absent file → section skipped.
+SELF="$0"
+[ -L "$SELF" ] && SELF="$(readlink "$SELF")"
+DONATTY_SECTION="${JUPZEN_DONATTY_SECTION:-$HOME/Documents/Donatty/Source/donatty-stand/menubar/donatty-section.sh}"
+HAVE_DONATTY=0
+if [ -r "$DONATTY_SECTION" ]; then
+  # shellcheck source=/dev/null
+  . "$DONATTY_SECTION" && HAVE_DONATTY=1
+fi
+
+# Menu actions dispatch through this script with a param; Donatty owns the dn-* ones.
+if [ -n "${1:-}" ] && [ "$HAVE_DONATTY" = "1" ]; then
+  donatty_action "$1" && exit 0
+fi
+
 # curl args, incl. bearer auth when a token is configured
 auth_args=()
 [ -n "$TOKEN" ] && auth_args=(-H "Authorization: Bearer $TOKEN")
@@ -66,14 +83,42 @@ fmt_time() {
 
 STATUS=$("$CURL" -fsS --max-time 4 "${auth_args[@]}" "$BASE/status" 2>/dev/null)
 
+# Donatty icon is needed for the title in both branches below.
+dn_icon=""
+[ "$HAVE_DONATTY" = "1" ] && dn_icon="$(donatty_icon)"
+# Заголовок панели — один глиф на оба сервиса: в строке меню он занимает минимум
+# места, разбивка по сервисам остаётся в выпадающем меню. Показываем худшее
+# состояние, но выключенный сервис проблемой не считаем — иначе остановленный
+# стенд гасил бы индикатор постоянно.
+bar_glyph() {
+    local worst=0 g
+    for g in "$@"; do
+        case "$g" in
+            🔴)    [ "$worst" -lt 3 ] && worst=3 ;;
+            🟠)    [ "$worst" -lt 2 ] && worst=2 ;;
+            🟡|🔄) [ "$worst" -lt 1 ] && worst=1 ;;
+        esac
+    done
+    case "$worst" in
+        3) echo "🔴" ;;
+        2) echo "🟠" ;;
+        1) echo "🟡" ;;
+        *) case "$*" in *🟢*) echo "🟢" ;; *) echo "⚪️" ;; esac ;;
+    esac
+}
+
 if [ -z "$STATUS" ]; then
-  echo "⚪️ Zen"
+  echo "$(bar_glyph "⚪️" "$dn_icon")"
   echo "---"
+  echo "ZENMONEY | size=11 color=gray"
   echo "Service unreachable | color=red"
   echo "$BASE | href=$BASE"
   if [ -n "$COMPOSE_DIR" ]; then
-    echo "---"
     echo "Start syncer (docker compose up -d) | bash=/bin/bash param1=-lc param2=\"cd '$COMPOSE_DIR' && docker compose up -d\" terminal=false refresh=true"
+  fi
+  if [ "$HAVE_DONATTY" = "1" ]; then
+    echo "---"
+    donatty_render "$SELF"
   fi
   echo "---"
   echo "Refresh | refresh=true"
@@ -112,8 +157,9 @@ case "$st" in
     if [ "$anyAuthed" = "true" ] && [ "$zen" = "true" ]; then icon="🟢"; else icon="🟡"; fi ;;
   *)          icon="⚪️" ;;
 esac
-echo "$icon Zen"
+echo "$(bar_glyph "$icon" "$dn_icon")"
 echo "---"
+echo "ZENMONEY | size=11 color=gray"
 
 # --- status detail ---------------------------------------------------------
 
@@ -153,8 +199,6 @@ fi
 echo "Next sync: $(fmt_time "$nextAt")"
 [ -n "$err" ] && echo "Error: $err | color=red"
 
-echo "---"
-
 # --- actions ---------------------------------------------------------------
 
 # Sync now (POST /sync)
@@ -183,6 +227,11 @@ done <<< "$CARDS"
 if [ "$zen" != "true" ]; then
   [ -z "$sep" ] && { echo "---"; sep=1; }
   echo "⚠ Connect ZenMoney → open panel | href=$BASE color=orange"
+fi
+
+if [ "$HAVE_DONATTY" = "1" ]; then
+  echo "---"
+  donatty_render "$SELF"
 fi
 
 echo "---"
